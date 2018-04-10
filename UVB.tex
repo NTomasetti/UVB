@@ -1,0 +1,421 @@
+  \documentclass[12pt,a4paper]{article}\usepackage[]{graphicx}\usepackage[]{color}
+%% maxwidth is the original width if it is less than linewidth
+%% otherwise use linewidth (to make sure the graphics do not exceed the margin)
+\makeatletter
+\def\maxwidth{ %
+  \ifdim\Gin@nat@width>\linewidth
+    \linewidth
+  \else
+    \Gin@nat@width
+  \fi
+}
+\makeatother
+
+\definecolor{fgcolor}{rgb}{0.345, 0.345, 0.345}
+\newcommand{\hlnum}[1]{\textcolor[rgb]{0.686,0.059,0.569}{#1}}%
+\newcommand{\hlstr}[1]{\textcolor[rgb]{0.192,0.494,0.8}{#1}}%
+\newcommand{\hlcom}[1]{\textcolor[rgb]{0.678,0.584,0.686}{\textit{#1}}}%
+\newcommand{\hlopt}[1]{\textcolor[rgb]{0,0,0}{#1}}%
+\newcommand{\hlstd}[1]{\textcolor[rgb]{0.345,0.345,0.345}{#1}}%
+\newcommand{\hlkwa}[1]{\textcolor[rgb]{0.161,0.373,0.58}{\textbf{#1}}}%
+\newcommand{\hlkwb}[1]{\textcolor[rgb]{0.69,0.353,0.396}{#1}}%
+\newcommand{\hlkwc}[1]{\textcolor[rgb]{0.333,0.667,0.333}{#1}}%
+\newcommand{\hlkwd}[1]{\textcolor[rgb]{0.737,0.353,0.396}{\textbf{#1}}}%
+\let\hlipl\hlkwb
+
+\usepackage{framed}
+\makeatletter
+\newenvironment{kframe}{%
+ \def\at@end@of@kframe{}%
+ \ifinner\ifhmode%
+  \def\at@end@of@kframe{\end{minipage}}%
+  \begin{minipage}{\columnwidth}%
+ \fi\fi%
+ \def\FrameCommand##1{\hskip\@totalleftmargin \hskip-\fboxsep
+ \colorbox{shadecolor}{##1}\hskip-\fboxsep
+     % There is no \\@totalrightmargin, so:
+     \hskip-\linewidth \hskip-\@totalleftmargin \hskip\columnwidth}%
+ \MakeFramed {\advance\hsize-\width
+   \@totalleftmargin\z@ \linewidth\hsize
+   \@setminipage}}%
+ {\par\unskip\endMakeFramed%
+ \at@end@of@kframe}
+\makeatother
+
+\definecolor{shadecolor}{rgb}{.97, .97, .97}
+\definecolor{messagecolor}{rgb}{0, 0, 0}
+\definecolor{warningcolor}{rgb}{1, 0, 1}
+\definecolor{errorcolor}{rgb}{1, 0, 0}
+\newenvironment{knitrout}{}{} % an empty environment to be redefined in TeX
+
+\usepackage{alltt}\usepackage[]{graphicx}\usepackage[]{color}
+%% maxwidth is the original width if it is less than linewidth
+%% otherwise use linewidth (to make sure the graphics do not exceed the margin)
+\makeatletter
+\def\maxwidth{ %
+  \ifdim\Gin@nat@width>\linewidth
+    \linewidth
+  \else
+    \Gin@nat@width
+  \fi
+}
+\makeatother
+
+\usepackage{alltt}%
+\usepackage[]{graphicx}\usepackage[]{color}
+%% maxwidth is the original width if it is less than linewidth
+%% otherwise use linewidth (to make sure the graphics do not exceed the margin)
+
+%2multibyte Version: 5.50.0.2960 CodePage: 1252
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage[centertags]{amsmath}
+\usepackage{graphicx}%
+\usepackage{natbib}
+\usepackage{color}
+\usepackage[dvipsnames,svgnames*]{xcolor}
+\usepackage{array}
+\usepackage[hidelinks]{hyperref}
+\usepackage[font=small,skip=5pt]{caption}
+\usepackage[aboveskip=2pt]{subcaption}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage[]{algorithm2e}
+%\usepackage{tikz}
+%\usetikzlibrary{bayesnet}
+\usepackage{url}
+\usepackage{ulem}
+\usepackage{afterpage}
+\setcounter{MaxMatrixCols}{30}
+
+\def\app#1#2{%
+  \mathrel{%
+    \setbox0=\hbox{$#1\sim$}%
+    \setbox2=\hbox{%
+      \rlap{\hbox{$#1\propto$}}%
+      \lower1.1\ht0\box0%
+    }%i
+    \raise0.25\ht2\box2%
+  }%
+}
+\def\approxprop{\mathpalette\app\relax}
+
+\setlength{\topmargin}{0in}
+\setlength{\oddsidemargin}{0.08in}
+\setlength{\evensidemargin}{0.08in}
+\setlength{\textwidth}{6.5in}
+\setlength{\textheight}{9in}
+\setlength\parindent{0pt}
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+
+\title{Online Updating of Variational Bayes for Heterogeneous Forecasts of Vehicle Trajectory}
+\author{Nathaniel Tomasetti 
+\and Catherine Forbes
+\and Anastasios Panagiotelis}
+
+\begin{document}
+\maketitle
+
+
+
+\section{Introduction}
+\label{sec:intro}
+
+Aims:
+\begin{itemize}
+\item VB Updating to infer a posterior distribution in an online data setting
+\item Computational Efficiency for intractable models
+\item Explore approximation error for UVB and VB - Compare different q distributions
+\item Apply to various classes of problem
+\item Compare error to MCMC
+\end{itemize}
+
+Related Literature
+\begin{itemize}
+\item Kalman Filters, Extended Kalman Filters, Unscented Filter
+\item Particle Filters
+\item Varitional Bayesian Filtering: Vermaak, Lawrence \& Perez 2003, Smidl 2006, Jin \& Mokhtarian 2007, Smidl \& Quinn 2008
+\item Streaming Variational Bayes - Broderick et al. 2013
+\end{itemize}
+
+\section{Offline Variational Bayes}
+\label{sec:Inference}
+
+Let $x_{1:T}$ be a sequence of observed data up to some time $T$, associated with a model conditioned on some unknown parameter vector $\theta$ given by
+\begin{equation}
+\label{likelihood}
+p(x_{1:T} | \theta) = p(x_1) \prod_{t=2}^{T_1} p(x_t | x_{1:t-1}, \theta).
+\end{equation}
+When the model is augmented with some prior distribution $p(\theta)$, the posterior distribution at time $T$ is given by
+\begin{equation}
+\label{posterior}
+p(\theta | x_{1:T}) = \frac{p(x_{1:T} | \theta)p(\theta)}{\int_{\theta}p(x_{1:T} | \theta)p(\theta)d\theta}.
+\end{equation}
+\\
+
+For many models the integral in (\ref{posterior}) does not admit an analytical solution, and numeric integration may become computationally infeasable if $\theta$ is of a sufficiently high dimension. One method to infer the posterior distribution, that is popular for its computational speed, is Variational Bayes (VB, see \citet{Blei2017} for a recent review). VB replaces the posterior distribution with a parametric approximation, denoted by $q_{\lambda}(\theta |x_{1:T})$, where $\lambda$ is a vector of auxiliary parameters associated with the approximation that may depend on the observations $x_{1:T}$.
+
+\subsection{Variational Bayes}
+\label{subsec:VB}
+
+VB posits a family of parametric approximating distributions $q_{\lambda}\theta |x_{1:T})$, parameterised by an auxiliary vector $\lambda$, that share the same support as the true posterior distribution $p(\theta |x_{1:T})$. Note that $q_{\lambda}(\theta |x_{1:T})$ does not neccesarily depend on $x_{1:T}$, but this notation is used to make it clear that this distribution is an approximation for $p(\theta |x_{1:T})$. A member of the approximating family is chosen to minimise some error function, typically the Kullback-Leibler (KL) divergence from $q_{\lambda}(\theta |x_{1:T})$ to $p(\theta |x_{1:T})$, given by $KL[q_{\lambda}(\theta |x_{1:T})\hspace{.1cm}||\hspace{.1cm}p(\theta |x_{1:T})]$ \citep{Kullback1951}. The KL divergence is defined by
+\begin{equation}
+\label{KL-def}
+KL[q_{\lambda}(\theta |x_{1:T})\hspace{.1cm}||\hspace{.1cm}p(\theta |x_{1:T})] = E_q \left[ \log(q_{\lambda}(\theta |x_{1:T})) - \log(p(\theta |x_{1:T})) \right],
+\end{equation}
+and is a non-negative, asymmetric measure of the discrepancy between $p(\theta |x_{1:T})$ and $q_{\lambda}(\theta | x_{1:T})$  that will be equal to zero if and only if $p(\theta | x_{1:T}) = q_{\lambda}(\theta | x_{1:T})$ almost everywhere \citep{Bishop2006}.
+\\
+
+Typically the expectation in (\ref{KL-def}) is intractable, and Monte-Carlo estimates are compuationally infeasible due to the inclusion of the term $p(\theta | x_{1:T})$, which is only known up to proportionality. Instead VB uses the Evidence Lower Bound (ELBO), denoted by $\mathcal{L}(q, \lambda)$, as an error function where
+\begin{equation}
+\label{ELBO}
+\mathcal{L}(q, \lambda) = E_q \left[\log(p(\theta, x_{1:T})) - \log(q_{\lambda}(\theta | x_{1:T}))\right],
+\end{equation}
+which is evaluated with Monte-Carlo estimates
+\begin{equation}
+\label{ELBO-MC}
+\mathcal{L}(q, \lambda) \approx \frac{1}{M} \sum_{j=1}^M \left(\log(p(\theta_{j}, x_{1:T})) - \log(q_{\lambda}(\theta_{j} | x_{1:T})) \right)
+\end{equation}
+where $\theta_{j} \sim q_{\lambda}(\theta | x_{1:T})$. The ELBO is equal to the negative KL divergence plus a constant, and hence maximising (\ref{ELBO}) with respect to $q_{\lambda}(\theta | x_{1:T})$ is equivalent to minimising (\ref{KL-def}).
+
+\subsection{Stochastic Gradient Ascent}
+\label{subsec:SGA}
+For exponential family likelihood models, $p$, with a factorisable approximation, $q$, the characteristics of the surface of the ELBO can be exploited for optimisation in what is known as Mean Field Variational Bayes \citep{Jordan1999, Ghahramani2000, Wainwright2008}, but for more general distributions the surface of the ELBO and its stochastic estimate are unknown. In this general case, maximisation proceeds by optimising only the auxiliary parameters $\lambda$ for a fixed distribution family $q$ with stochastic gradient ascent (SGA).
+\\
+
+SGA repeatedly takes Monte-Carlo estimates of the gradient of the ELBO with respect to $\lambda$, $\partial\mathcal{L}(q, \lambda) / \partial \lambda$, as $\widehat{\partial\mathcal{L}(q, \lambda) / \partial \lambda}$ and applies updates of the form
+\begin{equation}
+\label{gradientAscent}
+\lambda^{(m+1)} = \lambda^{(m)} + \rho^{(m)} \widehat{\frac{\partial\mathcal{L}(q, \lambda)}{\partial \lambda}} \bigg\rvert_{\lambda = \lambda^{(m)}}
+\end{equation}
+until the change from $\mathcal{L}(q, \lambda^{(m)})$ to $\mathcal{L}(q, \lambda^{(m+1)})$ falls below some pre-specified threshold \citep{Hoffman2013}. Intuitively, individual elements of $\lambda$ will increase if the estimate of the slope of $\mathcal{L}(q, \lambda^{(m)})$ is positive at the current point, and will decrease if that estimate is negative, until each element of $\lambda$ reaches a point where the slope is zero. This procedure is guaranteed to converge to a local maximum \citep{Robbins1951} if the sequence $\rho^{(m)}, m = 1, \dots, \infty$, satisfies
+\begin{align}
+&\sum_{m=1}^{\infty} \rho^{(m)} =  \infty \\
+&\sum_{m=1}^{\infty} (\rho^{(m)})^2 <  \infty.
+\end{align}
+\\
+
+There are two popular choices for the Monte Carlo estimator of $\partial\mathcal{L}(q, \lambda) / \partial \lambda$, the score estimator of \citet{Ranganath2014}, 
+\begin{equation}
+\label{scoreDeriv}
+\widehat{\frac{\partial\mathcal{L}(q, \lambda)}{\partial \lambda}}_{SC} = \sum_{j = 1}^M \frac{\partial \log(q_{\lambda}(\theta_{j} | x_{1:T}))}{\partial \lambda} \left(\log(p(\theta_{j}, x_{1:T})) - \log(q_{\lambda}(\theta_{j} | x_{1:T})) \right),
+\end{equation}
+where $\theta_{j} \sim q_{\lambda}(\theta | x_{1:T})$, and the reparameteterised estimator of \citet{Kingma2014}. Reparameterisation introduces an auxiliary variable $\epsilon$ and differentiable function $f(\cdot, \cdot)$ to rephrase Variational Bayes optimisation as the equivalent search for the parameters $\lambda$ that minimises the Kullback Leibler divergence from some distribution $q(\epsilon)$ with zero free parameters to the posterior distribution implied by the transformation $\theta = f(\epsilon, \lambda)$:
+\begin{equation}
+\label{rpDist}
+p(f(\epsilon, \lambda) | x_{1:T}) = p(\theta | x_{1:T}) |J^{-1}(f(\epsilon, \lambda))|
+\end{equation}
+where $J(f(\epsilon, \lambda))$ is the Jacobian Matrix of the transformation $f(\epsilon, \lambda)$. Examples of $f$ and $q(\epsilon)$ include treating $\theta$ as location-scale transformation from a standard normal $\epsilon$, or an inverse-CDF transformation from a uniform$(0, 1)$ $\epsilon$. 
+\\
+
+The ELBO can be reparameterised by substituting $p(\theta, x_{1:T}) = p(f(\epsilon, \lambda), x_{1:T})|J(f(\epsilon, \lambda))|$ into (\ref{ELBO}),
+\begin{equation}
+\label{rpELBO}
+\mathcal{L}(q, \lambda) = E_{r(\epsilon)} \bigg[\log(p(f(\epsilon,\lambda), x_{1:T})|J(f(\epsilon, \lambda))|) - \log(q(\epsilon))\bigg].
+\end{equation}
+The gradient of the reparameterised ELBO with respect to $\lambda$ is given by 
+\begin{align}
+\label{rpELBODeriv}
+\frac{\partial\mathcal{L}(q, \lambda)}{\partial \lambda} &= \frac{\partial}{\partial \lambda} \bigg( E_{q(\epsilon)} \bigg[\log\big(p(f(\epsilon,\lambda), x_{1:T})|J(f(\epsilon, \lambda))|\big) - \log(q(\epsilon))\bigg] \bigg) \nonumber \\
+&= E_{q(\epsilon)} \left[ \frac{\partial}{\partial \lambda} \bigg(\log(p(f(\epsilon,\lambda), x_{1:T})) + \log(|J(f(\epsilon, \lambda))|) - \log(q(\epsilon)) \bigg)\right] \nonumber \\
+&= E_{q(\epsilon)} \left[ \frac{\partial \log(p(f(\epsilon,\lambda), x_{1:T}))}{\partial f(\epsilon,\lambda)} \frac{\partial f(\epsilon,\lambda)}{\partial \lambda}  + \frac{\partial \log(|J(f(\epsilon, \lambda))|)}{\partial \lambda} \right].
+\end{align}
+This form leads to the reparameterised gradient estimator,
+\begin{equation}
+\label{rpDeriv}
+\widehat{\frac{\partial\mathcal{L}(q, \lambda)}{\partial \lambda}}_{RP} = \sum_{j = 1}^M \frac{\partial f(\lambda, \epsilon_j)}{\partial \lambda} \frac{\partial \log(p(\theta, x_{1:T}))}{\partial \theta} \bigg\rvert_{\theta = f(\lambda, \epsilon_j)} + \frac{\partial \log(J(f(\lambda, \epsilon_j)))}{\partial \lambda}, 
+\end{equation}
+where $\epsilon_j \sim q(\epsilon)$. The reparameterised gradient estimator typically has lower variance than the score estimator (see eg. \cite{Rezende2014}; \cite{Ruiz2016}), but treating $q_{\lambda}(\theta | x_{1:T})$ as the distribution implied by the transformation $f$ of $q(\epsilon)$ restricts the class of approximating families that can be used.
+\\
+
+\section{Updating Variational Bayes}
+\label{sec:UVB}
+
+If additional data is constantly being observed in an online setting, there may a sequence of time points $T_1, T_2, \dots$, from which a sequence of posterior distributions $p(\theta | x_{1:T_1}), p(\theta | x_{1:T_2}), \dots$, may be inferred, which is illustrated in Figure \ref{fig:timeUpdate} for data taken from vehicle travelling towards the right. In the left panel, the vehicle has been observed for a time period $T_{n-1}$ resulting in data $x_{1:T_{n-1}}$ which can be incorporated into the Variational Bayes posterior approximation $q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}})$. In the right panel, after observation for an additional period to time $T_{n}$, an additional $T_{n} - T_{n-1}$ data points are available, and posterior inference could be improved by incorporating the information contained in $x_{T_{n-1}+1:T_{n}}$ to form the posterior approximation $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$. Note that the $n-1$ and $n$ subscripts on $\lambda$ are introduced to differentiate the auxiliary parameter vector conditioned on data up to times $T_{n-1}$ and $T_{n}$. To facilitate this posterior update, an Updating Variational Bayes (UVB) mechanism is introduced where only $x_{T_{n-1}+1:T_{n}}$ needs to be processed.
+\begin{figure}[ht]
+\centering
+\includegraphics[width = 0.95\textwidth]{timeUpdate}
+\caption{Left: The path of a vehicle in the NGSIM dataset tat has been observed for a time period equal to $T_{n-1}$, where the direction of travel is from the left to the right. Right: The same vehicle at a later time $T_{n}$, with the extra $T_{n} - T_{n-1}$ observations denoted by the dashed line. Posterior inference about this vehicle could be updated from time $T_{n-1}$ to time $T_{n}$ by the inclusion of this additional information.}
+\label{fig:timeUpdate}
+\end{figure}
+\\
+
+From Bayes Rule, the posterior distribution at time $T_{n}$, $p(\theta | x_{1:T_{n}})$ is given by
+\begin{equation}
+\label{truePost}
+p(\theta | x_{1:T_n}) \propto p(x_{1:T_n} | \theta)p(\theta).
+\end{equation}
+Standard Bayesian compuational methods, including VB, require the evaluation of the right hand side of (\ref{truePost}), where the likelihood is given by (\ref{likelihood}), the product of $T_n$ terms. If the posterior at time $T_{n-1}$ is available, (\ref{truePost}) is equivalently given by the Bayesian update rule,
+\begin{equation}
+\label{updatePost}
+p(\theta | x_{1:T_{n}}) \propto p(x_{T_{n-1}+1:T_{n}} | x_{1:T_{n-1}}, \theta)p(\theta | x_{1:T_{n-1}}),
+\end{equation}
+where the right hand side now includes a product of only $T_{n} - T_{n-1}$ terms. However computation of $p(\theta | x_{1:T_{n-1}})$ is often infeasible, and Bayesian updating cannot be applied in practice. Instead, posterior inference is only available using (\ref{truePost}). 
+
+To allow Bayesian updating to be applied, UVB replaces $p(\theta | x_{1:T_{n-1}})$ with the analytical approximation $q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}})$, which results in the posterior distribution
+\begin{equation}
+\label{pHatPosterior}
+\hat{p}(\theta |  x_{1:T_{n}}) \propto p(x_{T_{n-1}+1:T_{n}} | \theta)q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}}).
+\end{equation}
+UVB then constructs the approximating distribution $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$ by choosing the vector $\lambda_{n}$ for a fixed family $q$ that minimises the Kullback-Leibler divergence from $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$ to $\hat{p}(\theta |  x_{1:T_{n}})$ by standard ELBO gradient optimisation methods discussed in Section \ref{subsec:SGA},
+\\
+
+\iffalse
+The ELBO gradient estimators to construct the updated Variational Bayes approximation $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$, can be obtained by substituting 
+\begin{equation}
+\label{ApproxJoint}
+\hat{p}(\theta |  x_{1:T_{n}}) = p(x_{T_{n-1}+1:T_{n}} | \theta)q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}}).
+\end{equation}
+into the score gradient estimator (\ref{scoreDeriv}) or the reparameterised gradient estimator (\ref{rpDeriv}). The updating score estimator is given by
+\begin{align}
+\widehat{\frac{\partial\mathcal{L}(q, \lambda_{n})}{\partial \lambda_{n}}}_{USC} &= \sum_{j = 1}^M \frac{\partial \log(q_{\lambda_{n}}(\theta_{j} | x_{1:T_{n}}))}{\partial \lambda_{n}} \nonumber \\
+&\times \left(\log(q_{\lambda_{n-1}}(\theta_{j} | x_{1:T_{n-1}})p(x_{T_{n-1}+1:T_{n}} | x_{1:T_{n-1}}, \theta)) - \log(q_{\lambda_{n}}(\theta_{j} | x_{1:T_{n}})) \right) \label{scoreUpdate}
+\end{align}
+where $\theta_{j} \sim q_{\lambda_{n}}(\theta | x_{1:T_{n}})$. Similarly, the updating reparameterised estimator is given by
+\begin{align}
+\widehat{\frac{\partial\mathcal{L}(q, \lambda_{n})}{\partial \lambda_{n}}}_{URP} &= \sum_{j = 1}^M \frac{\partial f(\lambda_{n}, \epsilon_j)}{\partial \lambda_{n}} \frac{\partial \log(q_{\lambda_{n-1}}(\theta |x_{1:T_{n-1}})p(x_{T_{n-1}+1:T_{n}} | x_{1:T_{n-1}}, \theta))}{\partial \theta} \bigg\rvert_{\theta = f(\lambda_{n}, \epsilon_j)} \nonumber \\
+& + \frac{\partial \log(J(\lambda_{n}, \epsilon_j))}{\partial \lambda_{n}}, \label{rpUpdate}
+\end{align}
+where $\epsilon_j \sim r(\epsilon)$. 
+\fi
+
+Minimising the KL divergence to (\ref{pHatPosterior}) is not equivalent to minimising the KL divergence to the true posterior (\ref{updatePost}) unless $q_{\lambda_{n-1}}(\theta |  x_{1:T_{n-1}}) = p(\theta |  x_{1:T_{n-1}})$ almost everywhere, which requires the true posterior to be a member of the family $q$. Thus UVB introduces an additional approximation error to Variational Bayes inference which depends largely on the ability of the family $q$ chosen to adequately approximate the true posterior distribution.
+
+The computational complexity of UVB as $n$ increases is $O(T_{n} - T_{n-1})$, which is constant if updates are repeated periodically so that the sequence $T_1, T_2, \dots$ is evenly spaced. In constrast, the computational complexity of standard VB is $O(T_{n})$ as is requires evaluation of the complete data likelihood, $p(x_{1:T_{n}} | \theta)$, at each $T_{n}$. A summary of the UVB algorithm is given by Algorithm \ref{alg:UVB}.
+
+\begin{algorithm}[H]
+ \SetKwInOut{Input}{Input}
+ \Input{Prior, Likelihood.}
+ \KwResult{Approximating distribution at $T_N$.}
+ Observe $x_{1:T_1}$\;
+ Use (\ref{scoreDeriv}) or (\ref{rpDeriv}) to construct $q_{\lambda_1}(\theta | x_{1:T_1})$\;
+ \For{$n \mbox{ in } 2, \dots, N$}{
+   Observe $x_{T_{n-1}+1:T_n}$\;
+   Use $q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}})$ and (\ref{scoreUpdate}) or (\ref{rpUpdate}) to construct $q_{\lambda_n}(\theta | x_{1:T_n})$.
+  }
+ \caption{Updating Variational Bayes}
+  \label{alg:UVB}
+\end{algorithm}
+
+\section{Approximation Error}
+
+We consider three approaches to posterior inference:
+\begin{enumerate}
+\item Posterior sampling with MCMC,
+\item Approximate Posterior inference with VB,
+\item Approximate Posterior inference with UVB,
+\end{enumerate}
+
+As the number of iterations increases, samples generated by MCMC converge to serially correlated samples from the true posterior distribution and we will consider MCMC as exact inference for the purpose of measuring VB and UVB approximation error in this paper.
+\\
+
+In this section we discuss several choices loss functions to measure this error. In the general case, the distance between the posterior distribution $p(\theta | x_{1:T_n})$ and approximation $q_{\lambda_n}(\theta |  x_{1:T_n})$ is of interest, however there may be cases where a model specific loss is of interest: the accuracy of an application of $\theta$ is more relevant than the accuracy of the posterior approximation itself. 
+
+
+\subsection{Posterior Distance}
+
+Each VB algorithm results in a density for $q(\theta | x)$, however we only have access to the true posterior $p(\theta | x_{1:T_n})$ through a set of MCMC samples. To measure the distance between the posterior and its variational approximation we consider the empirical first order Wasserstein distance, $W_1$, between thinned MCMC samples $\theta^{(i)}_p, i = 1, \dots, N$ and independently generated samples $\theta^{(j)}_q, j = 1, \dots, N$ from $q_{\lambda_n}(\theta |  x_{1:T_n})$.
+\\
+
+The Wasserstein distance is given by
+\begin{equation}
+\label{wasserstein}
+W_1 = \underset{\boldsymbol{\omega} \in \Omega}{\min} \sum_{i=1}^N \sum_{j=1}^N \omega_{[ij]} d_{ij}
+\end{equation}
+where $d_{ij}$ denotes the euclidean distance between $\theta^{(i)}_p$ and $\theta^{(j)}_q$, while $\Omega$ denotes the set of all bijections between $\theta_p$ and $\theta_q$: each $\boldsymbol{\omega}$ is a matrix with one $1$ in each row and column and zeros in all other locations.
+\\
+
+This is also known as the Earthmover distance and is calculated with the R package `transport' \citep{transport} using the forward and reverse auction algorithm of \citet{Bertsekas1992}.
+
+\subsection{Predictive Model Loss}
+
+For a predictive model, where the aim is to predict the value of $x_{T_n + h}$ given observations of $x_{1:T_n}$, we consider loss functions based on the accuracy of the predictive distribution.
+
+For example, consider the AR(p) model given by
+\begin{equation}
+x_t = \mu + \sum_{s=1}^p \gamma_s (x_{t-s} - \mu) + e_t,
+\end{equation}
+with the parameter vector
+\begin{equation}
+\theta = \{\mu, \gamma_1, \dots, \gamma_p \}.
+\end{equation}
+\\
+
+Given the posterior distribution $p(\theta | x_{1:T_n})$, the predictive distribution associated with $x_{T_n +h}$ is given by
+\begin{equation}
+p(x_{T_n + h} | x_{1:T_n}) = \int_{\theta} p(x_{T_n + h} | x_{1:T_n}, \theta)p(\theta | x_{1:T_n})d\theta.
+\end{equation}
+The loss function associated with this value is given by $L(n, h)$ and is measured by the predictive logscore,
+\begin{equation}
+L(n, h) = \log(p(x_{T_n + h} | x_{1:T_n}))
+\end{equation}
+
+\subsection{Classification Model Loss}
+
+Many models aim to associate a class label $k_i = 1 , \dots, K$ to observations of each unit $i$. Consider the problem where $T_n$ observations are recorded for each of $M$ units from a mixture of normal distributions,
+\begin{equation}
+\label{mixNormalDGP}
+x_{i, t} \sim \sum_{k=1}^K \pi_{i, k} N(\mu_k, \sigma^2_{k}).
+\end{equation}
+At each time period we aim to infer the posterior distribution of each mixture components parameters $\{\mu_k, \sigma_k | k = 1, \dots, K\}$ and predict the class labels of $x_{i, 1:T_n}$ via inference of the mixture weights $\pi_{i, 1}, \dots, \pi_{i, K}$. Approximation error on the mixture components is measured by the Wasserstein Distance, while class label loss function is proportion of correct classifications where the class of unit $i$ is given by
+\begin{equation}
+\mbox{Class}_{i} = \arg \underset{k}{\max} \mbox{ } E[p(\pi_{i, k} |  x_{1:M, 1:T_n})].
+\end{equation}
+
+\subsection{State-Space Model Loss}
+
+Many models of interest can be expressed as a dynamic state-space, with
+\begin{align}
+x_t &\sim p(x_t | z_{t}, \theta) \label{measure} \\
+z_t &\sim p(z_t | z_{t-1}, \theta) \label{transition} ,
+\end{align}
+where inference of $p(z_t, \theta | x_{1:t})$ is desired at each $t$. This problem is known as \textit{Bayesian filtering}, where the posterior distribution is recursively updated from $p(z_{t-1}, \theta | x_{1:t-1})$ to $p(z_t, \theta | x_{1:t})$ by
+\begin{align}
+p(z_t, \theta | x_{1:t-1}) &= \int p(z_t | z_{t-1}, \theta) p(z_{t-1}, \theta | x_{1:t-1})dz_{t-1} \label{marginalise} \\
+p(z_t, \theta | x_{1:t}) &\propto p(x_t | z_t, \theta) p(z_t, \theta | x_{1:t-1}) \label{update}
+\end{align}
+for a given prior distribution $p(z_0, \theta)$. 
+\\
+
+For a limited class of models the marginalisation over $z_{t-1}$ in (\ref{marginalise}) and posterior in (\ref{update}) are both analytically tractable for all $t$, such as when both (\ref{measure}) and (\ref{transition}) are linear and Gaussian. Typically an approximation is required, such as the extended Kalman filter \citep{Anderson1979}, the unscented Kalman filter \citep{Wan2000}, or particle filters \citet{Arulampalam2002}. Variational Particle Filtering is introduced by \citet{Smidl2008}, in cases where a subset $z_{1, t}$ of $z_t = \{z_{1, t}, z_{2, t}\}$ can be analytically marginalised, and does not discuss simultaneous inference of the static variables $\theta$ which is allowed with UVB below.
+\\
+
+Replacing $p(z_{t-1}, \theta | x_{1:t-1})$ with the Variational Bayes approximation $q(z_{t-1} | x_{1:t-1}, \theta)q(\theta|x_{1:t-1})$ we obtain 
+\begin{align}
+\hat{p}(z_t, \theta | x_{1:t-1}) &= q(\theta | x_{1:t-1}) \int p(z_t | z_{t-1}, \theta) q(z_{t-1} | x_{1:t-1}, \theta)dz_{t-1} \label{marginaliseHat} \\
+\hat{p}(z_t, \theta | x_{1:t}) &\propto p(x_t | z_t, \theta)\hat{p}(z_t, \theta | x_{1:t-1}). \label{updateHat}
+\end{align}
+
+If (\ref{transition}) is linear and Gaussian, and  $q(z_{t-1} | x_{1:t-1}, \theta)$ is Gaussian, (\ref{marginaliseHat}) can be marginalised analytically allowing the Variational Bayes approximation at time $t$ as
+\begin{equation}
+\label{UVBfilter}
+\hat{p}(z_t, \theta | x_{1:t}) \approx q(z_{t} | x_{1:t}, \theta)q(\theta|x_{1:t}).
+\end{equation}
+\\
+
+Let $a_{t, \alpha}$ and $b_{t, \alpha}$ be the lower and upper bounds of the $\alpha\%$ highest probability interval for $z_t$, that is
+\begin{equation}
+\label{HPI}
+\{a_{t, \alpha}, b_{t, \alpha}\} = \arg \underset{\{a, b\}}{\min}\mbox{ } b - a, \mbox{ where } \int_a^b p(z_t | z_{1:t-1}, \theta, x_{1:t})dz_t = \alpha.
+\end{equation}
+\\
+
+We define the loss function as the $\alpha\%$ latent state coverage rate, 
+\begin{equation}
+\label{coverage}
+L(n, \alpha) = \frac{\sum_{t=1}^{T_n} I(a_{t, x} < z_t < b_{t, x})}{T_n}
+\end{equation}
+where $I(\cdot)$ is the indicator function, which equals one if the argument is true and zero otherwise.
+
+\section{Simulation Results}
+
+
+\bibliographystyle{asa}
+\bibliography{references}
+
+
+
+
+
+\end{document}
