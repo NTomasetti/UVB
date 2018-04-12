@@ -246,19 +246,19 @@ From Bayes Rule, the posterior distribution at time $T_{n}$, $p(\theta | x_{1:T_
 \label{truePost}
 p(\theta | x_{1:T_n}) \propto p(x_{1:T_n} | \theta)p(\theta).
 \end{equation}
-Standard Bayesian compuational methods, including VB, require the evaluation of the right hand side of (\ref{truePost}), where the likelihood is given by (\ref{likelihood}), the product of $T_n$ terms. If the posterior at time $T_{n-1}$ is available, (\ref{truePost}) is equivalently given by the Bayesian update rule,
+Standard Bayesian compuational methods, including VB, require the evaluation of the right hand side of (\ref{truePost}), where the likelihood is given by (\ref{likelihood}), the product of $T_n$ terms. If the posterior at time $T_{n-1}$ is available (\ref{truePost}) is equivalently given by the Bayesian update rule,
 \begin{equation}
 \label{updatePost}
 p(\theta | x_{1:T_{n}}) \propto p(x_{T_{n-1}+1:T_{n}} | x_{1:T_{n-1}}, \theta)p(\theta | x_{1:T_{n-1}}),
 \end{equation}
 where the right hand side now includes a product of only $T_{n} - T_{n-1}$ terms. However computation of $p(\theta | x_{1:T_{n-1}})$ is often infeasible, and Bayesian updating cannot be applied in practice. Instead, posterior inference is only available using (\ref{truePost}). 
 
-To allow Bayesian updating to be applied, UVB replaces $p(\theta | x_{1:T_{n-1}})$ with the analytical approximation $q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}})$, which results in the posterior distribution
+To allow Bayesian updating to be applied, UVB replaces $p(\theta | x_{1:T_{n-1}})$ with the approximation at the previous time-step, $q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}})$, which results in the posterior distribution
 \begin{equation}
 \label{pHatPosterior}
 \hat{p}(\theta |  x_{1:T_{n}}) \propto p(x_{T_{n-1}+1:T_{n}} | \theta)q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}}).
 \end{equation}
-UVB then constructs the approximating distribution $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$ by choosing the vector $\lambda_{n}$ for a fixed family $q$ that minimises the Kullback-Leibler divergence from $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$ to $\hat{p}(\theta |  x_{1:T_{n}})$ by standard ELBO gradient optimisation methods discussed in Section \ref{subsec:SGA},
+UVB then constructs the approximating distribution $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$ by choosing the vector $\lambda_{n}$ for a fixed family $q$ that minimises the Kullback-Leibler divergence from $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$ to $\hat{p}(\theta |  x_{1:T_{n}})$ by standard ELBO gradient optimisation methods discussed in Section \ref{subsec:SGA}.
 \\
 
 \iffalse
@@ -298,6 +298,17 @@ The computational complexity of UVB as $n$ increases is $O(T_{n} - T_{n-1})$, wh
   \label{alg:UVB}
 \end{algorithm}
 
+\section{Importance Sampling}
+
+\begin{itemize}
+\item At each time point $T_n$ we have an approximation to the posterior, $q_{\lambda_n}(\theta | x_{1:T_n})$
+\item The true posterior is known up to proportionality, $p(\theta | x_{1:T_n}) \propto p(x_{1:T_n} | \theta)p(\theta)$
+\item Use an importance sampler to reweight samples $\theta^{(1)}, \dots, \theta^{(M)}$ from $q$ to form $$p^*(\theta | x_{1:T_n}) = \sum_{i=1}^M w^{(i)} \delta(\theta^{(i)})$$
+\item $$w^{(i)} = \frac{p(\theta^{(i)}, x_{1:T_n}) / q(\theta^{(i)} | x_{1:T_n})}{\sum_{i=1}^N p(\theta^{(i)}, x_{1:T_n}) / q(\theta^{(i)} | x_{1:T_n})}$$
+\item Use this to produce forecasts etc.
+\item Need to evaluate complete sample $x_{1:T_n}$ to calculate the importance sampler weights but it might be worthwhile
+\end{itemize}
+
 \section{Approximation Error}
 
 We consider three approaches to posterior inference:
@@ -323,7 +334,7 @@ The Wasserstein distance is given by
 \label{wasserstein}
 W_1 = \underset{\boldsymbol{\omega} \in \Omega}{\min} \sum_{i=1}^N \sum_{j=1}^N \omega_{[ij]} d_{ij}
 \end{equation}
-where $d_{ij}$ denotes the euclidean distance between $\theta^{(i)}_p$ and $\theta^{(j)}_q$, while $\Omega$ denotes the set of all bijections between $\theta_p$ and $\theta_q$: each $\boldsymbol{\omega}$ is a matrix with one $1$ in each row and column and zeros in all other locations.
+where $d_{ij}$ denotes the euclidean distance between $\theta^{(i)}_p$ and $\theta^{(j)}_q$, while $\Omega$ denotes the set of all bijections from $\theta_p$ to $\theta_q$: each $\boldsymbol{\omega}$ is a matrix with one $1$ in each row and column and zeros in all other locations.
 \\
 
 This is also known as the Earthmover distance and is calculated with the R package `transport' \citep{transport} using the forward and reverse auction algorithm of \citet{Bertsekas1992}.
