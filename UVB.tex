@@ -300,14 +300,48 @@ The computational complexity of UVB as $n$ increases is $O(T_{n} - T_{n-1})$, wh
 
 \section{Importance Sampling}
 
-\begin{itemize}
-\item At each time point $T_n$ we have an approximation to the posterior, $q_{\lambda_n}(\theta | x_{1:T_n})$
-\item The true posterior is known up to proportionality, $p(\theta | x_{1:T_n}) \propto p(x_{1:T_n} | \theta)p(\theta)$
-\item Use an importance sampler to reweight samples $\theta^{(1)}, \dots, \theta^{(M)}$ from $q$ to form $$p^*(\theta | x_{1:T_n}) = \sum_{i=1}^M w^{(i)} \delta(\theta^{(i)})$$
-\item $$w^{(i)} = \frac{p(\theta^{(i)}, x_{1:T_n}) / q(\theta^{(i)} | x_{1:T_n})}{\sum_{i=1}^N p(\theta^{(i)}, x_{1:T_n}) / q(\theta^{(i)} | x_{1:T_n})}$$
-\item Use this to produce forecasts etc.
-\item Need to evaluate complete sample $x_{1:T_n}$ to calculate the importance sampler weights but it might be worthwhile
-\end{itemize}
+At each time point $T_n$ we have an approximation to the posterior, $q_{\lambda_n}(\theta | x_{1:T_n})$. The true posterior is known up to proportionality, $p(\theta | x_{1:T_n}) \propto p(x_{1:T_n} | \theta)p(\theta)$. 
+\\
+
+Using an importance sampler to reweight samples $\theta^{(1)}, \dots, \theta^{(M)}$ from $q_{\lambda_n}(\theta | x_{1:T_n})$ to form 
+\begin{equation}
+\label{IS:Approx}
+p^*(\theta | x_{1:T_n}) = \sum_{i=1}^M w^{(i)}_{T_n} \delta(\theta^{(i)})
+\end{equation}
+seems like an easy way to correct for the VB approximation error, with a computational cost that is somewhere in-between VB and MCMC. The weights are given by
+\begin{align}
+\hat{w}^{(i)}_{T_n} &= \frac{p(\theta^{(i)}, x_{1:T_n})}{q(\theta^{(i)} | x_{1:T_n})} \label{IS:Weights} \\
+w^{(i)}_{T_n} &= \frac{\hat{w}^{(i)}_{T_n}}{\sum_{i=1}^M \hat{w}^{(i)}_{T_n}} \label{IS:WeightsNorm}
+\end{align}
+\\
+
+Is is easy to use this distribution for forecast purposes, though it cannot be used to construct the next VB approximation.
+
+We can also use the importance sampler to update the posterior approximation in an SMC fashion while the VB approximation updates. Let $T_{n+1} = T_{n} + H + 1$ for some $H > 0$, so there are $H$ observations in the gap between VB updates.
+\\
+
+Given the time $T_n$ importance sampler approximation, $p^*(\theta | x_{1:T_n})$, we can update this to $p^*(\theta | x_{1:T_n+h})$ for each $h = 1, \dots, H$ fairly easily. In this case,
+\begin{equation}
+\label{IS:ApproxUpdate}
+p^*(\theta | x_{1:T_n+h}) = \sum_{i=1}^M w^{(i)}_{T_n+h} \delta(\theta^{(i)})
+\end{equation}
+where
+\begin{align}
+\hat{w}^{(i)}_{T_n+h} &= \frac{p(\theta^{(i)}, x_{1:T_n+h})}{q(\theta^{(i)} | x_{1:T_n})} \nonumber \\
+&= \frac{p(x_{T_n+h} | \theta^{(i)})p(\theta^{(i)}, x_{1:T_n+h-1)}}{q(\theta^{(i)} | x_{1:T_n})} \nonumber \\
+&= p(x_{T_n+h} | \theta^{(i)}) \hat{w}^{(i)}_{T_n+h-1}, \label{IS:UpdateWeights}
+\end{align}
+and
+\begin{equation}
+\label{IS:UpdateWeightsNorma}
+w^{(i)}_{T_n+h} = \frac{\hat{w}^{(i)}_{T_n+h}}{\sum_{i=1}^M \hat{w}^{(i)}_{T_n+h}}.
+\end{equation}
+
+In this way, UVB with an importance sampler can be seen as an SMC algorithm, where we use the VB approximation as a proposal distribution, and propogate these particles forward in time (with possible re-sampling from the theta draws). When a UVB update is ready, we can sample a fresh set of particles to avoid degeneracy in the particles. Unfortunately each time we sample from $q$ we are required to re-estimate weights from (\ref{IS:Weights}) and (\ref{IS:WeightsNorm}) using the entire data set $x_{1:T_n}$ each time we generate samples from $q$. 
+\\
+
+
+
 
 \section{Approximation Error}
 
@@ -389,7 +423,7 @@ p(z_t, \theta | x_{1:t}) &\propto p(x_t | z_t, \theta) p(z_t, \theta | x_{1:t-1}
 for a given prior distribution $p(z_0, \theta)$. 
 \\
 
-For a limited class of models the marginalisation over $z_{t-1}$ in (\ref{marginalise}) and posterior in (\ref{update}) are both analytically tractable for all $t$, such as when both (\ref{measure}) and (\ref{transition}) are linear and Gaussian. Typically an approximation is required, such as the extended Kalman filter \citep{Anderson1979}, the unscented Kalman filter \citep{Wan2000}, or particle filters \citet{Arulampalam2002}. Variational Particle Filtering is introduced by \citet{Smidl2008}, in cases where a subset $z_{1, t}$ of $z_t = \{z_{1, t}, z_{2, t}\}$ can be analytically marginalised, and does not discuss simultaneous inference of the static variables $\theta$ which is allowed with UVB below.
+For a limited class of models the marginalisation over $z_{t-1}$ in (\ref{marginalise}) and posterior in (\ref{update}) are both analytically tractable for all $t$, such as when both (\ref{measure}) and (\ref{transition}) are linear and Gaussian. Typically this is not the case and an approximation is required, such as the extended Kalman filter \citep{Anderson1979}, the unscented Kalman filter \citep{Wan2000}, or particle filters \citet{Arulampalam2002}. Variational Particle Filtering is introduced by \citet{Smidl2008}, in cases where a subset $z_{1, t}$ of $z_t = \{z_{1, t}, z_{2, t}\}$ can be analytically marginalised, and does not discuss simultaneous inference of the static variables $\theta$ which is allowed with UVB below.
 \\
 
 Replacing $p(z_{t-1}, \theta | x_{1:t-1})$ with the Variational Bayes approximation $q(z_{t-1} | x_{1:t-1}, \theta)q(\theta|x_{1:t-1})$ we obtain 
@@ -398,7 +432,7 @@ Replacing $p(z_{t-1}, \theta | x_{1:t-1})$ with the Variational Bayes approximat
 \hat{p}(z_t, \theta | x_{1:t}) &\propto p(x_t | z_t, \theta)\hat{p}(z_t, \theta | x_{1:t-1}). \label{updateHat}
 \end{align}
 
-If (\ref{transition}) is linear and Gaussian, and  $q(z_{t-1} | x_{1:t-1}, \theta)$ is Gaussian, (\ref{marginaliseHat}) can be marginalised analytically allowing the Variational Bayes approximation at time $t$ as
+If (\ref{transition}) is linear and Gaussian, and  $q(z_{t-1} | x_{1:t-1}, \theta)$ is Gaussian, (\ref{marginaliseHat}) can be marginalised analytically, allowing the Variational Bayes approximation at time $t$ as
 \begin{equation}
 \label{UVBfilter}
 \hat{p}(z_t, \theta | x_{1:t}) \approx q(z_{t} | x_{1:t}, \theta)q(\theta|x_{1:t}).
