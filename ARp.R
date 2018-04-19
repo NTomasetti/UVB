@@ -1,22 +1,42 @@
 rm(list = ls())
-repenv <- Sys.getenv("SLURM_ARRAY_TASK_ID")
-i <- as.numeric(repenv)
+#repenv <- Sys.getenv("SLURM_ARRAY_TASK_ID")
+#i <- as.numeric(repenv)
 
-library(Rcpp, lib.loc = 'packages')
-library(RcppArmadillo, lib.loc = 'packages')
-library(RcppEigen, lib.loc = 'packages')
-library(rstan, lib.loc = 'packages')
+library(Rcpp)#, lib.loc = 'packages')
+library(RcppArmadillo)#, lib.loc = 'packages')
+library(RcppEigen)#, lib.loc = 'packages')
+library(rstan)#, lib.loc = 'packages')
 source('RFuns.R')
 sourceCpp('ARP.cpp')
 
-set.seed(i)
+forecast <- NULL
+
+for(rep in 1:100){
+
+if(rep == 1){
+  startTime <- Sys.time()
+} else if(rep == 2){
+  timePerIter <- Sys.time() - startTime
+  class(timePerIter) <- 'numeric'
+  if(attr(timePerIter, 'units') == 'mins'){
+    attr(timePerIter, 'units') = 'secs'
+    timePerIter <- timePerIter * 60
+  } else if(attr(timePerIter, 'units') == 'hours'){
+    attr(timePerIter, 'units') = 'hours'
+    timePerIter <- timePerIter * 3600
+  }
+  print(paste0('Estimated Finishing Time: ', Sys.time() + 99 * timePerIter))
+} else {
+  print(paste0('Estimated Finishing Time: ', Sys.time() + (101 - rep) * timePerIter))
+}
+set.seed(rep)
 
 T <- 200
 initialBatch <- 50
 updateSize <- 25
 lags <- 3
+MCsamples <- 250
 mu <- rnorm(1)
-H <- 5
 
 stationary <- FALSE
 sd <- 1
@@ -31,8 +51,8 @@ while(!stationary){
 }
 
 sigmaSq <- 1/rgamma(1, 5, 5)
-x <- rnorm(T+100+H)
-for(t in (lags+1):(T+100+H)){
+x <- rnorm(T+100+1)
+for(t in (lags+1):(T+100+1)){
   x[t] <- mu + sum(phi * (x[t-(1:lags)] -mu)) + rnorm(1, 0, sqrt(sigmaSq))
 }
 
@@ -47,29 +67,27 @@ priorLinv <- solve(t(chol(priorVar)))
 
 batches <- (T - initialBatch) / updateSize
 data <- c(100, seq(100 + initialBatch, T+100, length.out = batches+1))
-
-forecast <- NULL
 support <- seq(min(x)-sd(x), max(x)+sd(x), length.out = 1000)
 
 # MCMC for exact forecast densities
-for(t in data[2]:data[batches+1]){
+for(t in data[2]:data[batches+2]){
   
   # Fit MCMC
   MCMCfit <- ARpMCMCallMH(data = x[(data[1]+1 - lags):t],
                           reps = 15000,
                           draw = rep(0, dim),
                           hyper = list(mean = priorMean, varInv = priorVarInv),
-                          lags = lags)$draws[10001:15000,]
+                          lags = lags)$draws[floor(seq(10001, 15000, length.out = MCsamples)), ]
 
   # Set up forecast density
   densMCMC <- rep(0, 1000)
   # Forecast
-  for(i in 1:1000){
-      sigSq <- exp(MCMCfit[5*i, 1])
-      mu <- MCMCfit[5*i, 2]
-      phi <- MCMCfit[5*i, 3:(2 + lags)]
-      mean <- mu + phi %*% (x[(data[t+1]+s+1-(1:lags))] - mu)
-      densMCMC <- densMCMC + dnorm(support, mean, sqrt(sigSq)) / 1000
+  for(i in 1:MCsamples){
+      sigSq <- exp(MCMCfit[i, 1])
+      mu <- MCMCfit[i, 2]
+      phi <- MCMCfit[i, 3:(2 + lags)]
+      mean <- mu + phi %*% (x[t+1-(1:lags)] - mu)
+      densMCMC <- densMCMC + dnorm(support, mean, sqrt(sigSq)) / MCsamples
     }
     lower <- max(which(support < x[t+1]))
     upper <- min(which(support > x[t+1]))
@@ -86,8 +104,8 @@ for(t in data[2]:data[batches+1]){
                       data.frame(t = t + 1,
                                  ls = lsMCMC,
                                  inference = 'MCMC',
-                                 K = 1:K,
-                                 id = i))
+                                 K = 1:3,
+                                 id = rep))
 }
 
 
@@ -95,10 +113,15 @@ for(t in data[2]:data[batches+1]){
 for(K in 1:3){
   
   # Initial Lambda
-  lambda <- c(rep(c(-1, rep(0, lags+1)), K) + rnorm(dim*K, 0, 0.1),
-              rnorm(dim*K, -1, 0.1),
-              rep(1, K))
-              
+  if(K == 1){
+    lambda <- c(rnorm(1, -1, 0.1), rnorm(lags+1, 0, 0.1), chol(diag(1, dim)))
+  } else {
+    lambda <- c(rep(c(-1, rep(0, lags+1)), K) + rnorm(dim*K, 0, 0.1),
+                rnorm(dim*K, -1, 0.1),
+                rep(1, K))
+    
+  }
+  
   VBfit <- matrix(0, length(lambda), batches)
   UVBfit <- VBfit
   
@@ -107,7 +130,7 @@ for(K in 1:3){
     # VB Fits
     #If K = 1, use the reparam gradients
     if(K == 1){
-      VBfit[,1] <- fitVB(data = x[(data[1]+1 - lags):data[2]],
+      VBfit[,t] <- fitVB(data = x[(data[1]+1 - lags):data[t+1]],
                          lambda = lambda,
                          model = gradARP,
                          S = 25,
@@ -118,7 +141,7 @@ for(K in 1:3){
       
     } else {
       # Otherwise use score gradients
-      VBfit[,1] <- fitVBScore(data = x[(data[1]+1 - lags):data[2]],
+      VBfit[,t] <- fitVBScore(data = x[(data[1]+1 - lags):data[t+1]],
                               lambda = lambda,
                               model = singlePriorMixApprox,
                               dimTheta = dim,
@@ -141,7 +164,7 @@ for(K in 1:3){
         updateLinv <- t(solve(updateU))
         
         UVBfit[,t] <- fitVB(data = x[(data[t]+1-lags):data[t+1]],
-                            lambda = UVBfit[,t-1],
+                            lambda = lambda,
                             model = gradARP,
                             S = 25,
                             dimTheta = dim,
@@ -155,14 +178,15 @@ for(K in 1:3){
         updateVarInv <- array(0, dim = c(dim, dim, K))
         dets <- rep(0, K)
         for(k in 1:K){
-          updateVarInv[,,k] <- diag(exp(UVBfit[dim*K + (dim-1)*k + 1:dim])^(-2))
-          dets[k] <- 1 / prod(exp(UVBfit[dim*K + (dim-1)*k + 1:dim]))
+          sd <- exp(UVBfit[dim*K + dim*(k-1) + 1:dim, t-1])
+          updateVarInv[,,k] <- diag(1/sd^2)
+          dets[k] <- 1 / prod(sd)
         }
-        updateZ <- UVBfit[dim*K*2 + 1:dim] 
+        updateZ <- UVBfit[dim*K*2 + 1:K, t-1] 
         updateWeight <- exp(updateZ) / sum(exp(updateZ))
         
         UVBfit[,t] <- fitVBScore(data = x[(data[t]+1-lags):data[t+1]],
-                                 lambda = UVBfit[,t-1],
+                                 lambda = lambda,
                                  model = mixPriorMixApprox,
                                  dimTheta = dim,
                                  mix = K,
@@ -189,7 +213,7 @@ for(K in 1:3){
         if(K == 1){
           meanVB <- VBfit[1:dim, t]
           uVB <- matrix(VBfit[(dim+1):(dim*(dim+1)), t], ncol = dim)
-          drawVB <- mvtnorm::rmvnorm(1000, meanVB, t(uVB) %*% uVB)
+          drawVB <- mvtnorm::rmvnorm(MCsamples, meanVB, t(uVB) %*% uVB)
           qVB <- mvtnorm::dmvnorm(drawVB, meanVB, t(uVB) %*% uVB)
           pVB <- ARjointDens(x[(data[1]+1 - lags):(data[t+1])], drawVB, priorMean, priorVarInv, lags)
           wVB <- pVB / qVB
@@ -197,24 +221,24 @@ for(K in 1:3){
           
           meanUVB <- UVBfit[1:dim, t]
           uUVB <- matrix(UVBfit[(dim+1):(dim*(dim+1)), t], ncol = dim)
-          drawUVB <- mvtnorm::rmvnorm(1000, meanUVB, t(uUVB) %*% uUVB)
+          drawUVB <- mvtnorm::rmvnorm(MCsamples, meanUVB, t(uUVB) %*% uUVB)
           qUVB <- mvtnorm::dmvnorm(drawUVB, meanUVB, t(uUVB) %*% uUVB)
           pUVB <- ARjointDens(x[(data[1]+1 - lags):(data[t+1])], drawUVB, priorMean, priorVarInv, lags)
           wUVB <- pUVB / qUVB
           wUVBNorm <- wUVB / sum(wUVB)
         } else {
           # Mixture sampling is a bit more difficult
-          meanVB <- matrix(VBfit[1:(dim*K), t-1], ncol = K)
+          meanVB <- matrix(VBfit[1:(dim*K), t], ncol = K)
           varVB <-  array(0, dim = c(dim, dim, K))
           for(k in 1:K){
-            varVB[,,k] <- diag(exp(VBfit[dim*K + (dim-1)*k + 1:dim])^(2))
+            varVB[,,k] <- diag(exp(VBfit[dim*K + dim*(k-1) + 1:dim, t])^2)
           }
-          ZVB <- VBfit[dim*K*2 + 1:dim] 
+          ZVB <- VBfit[dim*K*2 + 1:K, t] 
           piVB <- exp(ZVB) / sum(exp(ZVB))
           
-          drawVB <- matrix(0, 1000, dim)
-          qVB <- rep(0, 1000)
-          for(i in 1:1000){
+          drawVB <- matrix(0, MCsamples, dim)
+          qVB <- rep(0, MCsamples)
+          for(i in 1:MCsamples){
             group <- sample(1:K, 1, prob = piVB)
             drawVB[i, ] <- mvtnorm::rmvnorm(1, meanVB[,group], varVB[,,group])
             
@@ -227,17 +251,17 @@ for(K in 1:3){
           wVBNorm <- wVB / sum(wVB)
           
           # UVB
-          meanUVB <- matrix(UVBfit[1:(dim*K), t-1], ncol = K)
+          meanUVB <- matrix(UVBfit[1:(dim*K), t], ncol = K)
           varUVB <-  array(0, dim = c(dim, dim, K))
           for(k in 1:K){
-            varUVB[,,k] <- diag(exp(UVBfit[dim*K + (dim-1)*k + 1:dim])^(2))
+            varUVB[,,k] <- diag(exp(UVBfit[dim*K + dim*(k-1) + 1:dim, t])^2)
           }
-          ZUVB <- UVBfit[dim*K*2 + 1:dim] 
+          ZUVB <- UVBfit[dim*K*2 + 1:K, t] 
           piUVB <- exp(ZUVB) / sum(exp(ZUVB))
           
-          drawUVB <- matrix(0, 1000, dim)
-          qUVB <- rep(0, 1000)
-          for(i in 1:1000){
+          drawUVB <- matrix(0, MCsamples, dim)
+          qUVB <- rep(0, MCsamples)
+          for(i in 1:MCsamples){
             group <- sample(1:K, 1, prob = piUVB)
             drawUVB[i, ] <- mvtnorm::rmvnorm(1, meanUVB[,group], varUVB[,,group])
             
@@ -256,7 +280,7 @@ for(K in 1:3){
         wVB <- wVB * pVB
         wVBNorm <- wVB / sum(wVB)
       
-        pUVB <- ARLikelihood(x[data[t+1] + (s-lags):s], drawVB, lags)
+        pUVB <- ARLikelihood(x[data[t+1] + (s-lags):s], drawUVB, lags)
         wUVB <- wUVB * pUVB
         wUVBNorm <- wUVB / sum(wUVB)
       }
@@ -264,7 +288,7 @@ for(K in 1:3){
       # Set up forecast densities
       densVB <- densUVB <- rep(0, 1000)
       # Create forecast densities by averaging over the 1000 draws
-      for(i in 1:1000){
+      for(i in 1:MCsamples){
         sigSq <- exp(drawVB[i, 1])
         mu <- drawVB[i, 2]
         phi <- drawVB[i, 3:(2 + lags)]
@@ -296,8 +320,14 @@ for(K in 1:3){
                                    ls = c(lsVB, lsUVB),
                                    inference = c('VB', 'UVB'),
                                    K = K,
-                                   id = i))
+                                   id = rep))
     }
+    print(paste(rep, K, t))
   }
 }
+}
+
+write.csv(forecast, paste0('results/', rep, '.csv'), row.names = FALSE)
+
+
   
