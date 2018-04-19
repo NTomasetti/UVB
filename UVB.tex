@@ -109,7 +109,7 @@
 \IfFileExists{upquote.sty}{\usepackage{upquote}}{}
 \IfFileExists{upquote.sty}{\usepackage{upquote}}{}
 
-\title{Online Updating of Variational Bayes for Heterogeneous Forecasts of Vehicle Trajectory}
+\title{Updating Variational Bayes}
 \author{Nathaniel Tomasetti 
 \and Catherine Forbes
 \and Anastasios Panagiotelis}
@@ -298,7 +298,7 @@ The computational complexity of UVB as $n$ increases is $O(T_{n} - T_{n-1})$, wh
   \label{alg:UVB}
 \end{algorithm}
 
-\section{Importance Sampling}
+\section{Importance Sampling} \label{sec:IS}
 
 At each time point $T_n$ we have an approximation to the posterior, $q_{\lambda_n}(\theta | x_{1:T_n})$. The true posterior is known up to proportionality, $p(\theta | x_{1:T_n}) \propto p(x_{1:T_n} | \theta)p(\theta)$. 
 \\
@@ -379,20 +379,22 @@ For a predictive model, where the aim is to predict the value of $x_{T_n + h}$ g
 
 For example, consider the AR(p) model given by
 \begin{equation}
-x_t = \mu + \sum_{s=1}^p \gamma_s (x_{t-s} - \mu) + e_t,
+x_t = \mu + \sum_{s=1}^p \phi_s (x_{t-s} - \mu) + e_t,
 \end{equation}
-with the parameter vector
+where $e_t \sim N(0, \sigma^2)$, with the parameter vector
 \begin{equation}
-\theta = \{\mu, \gamma_1, \dots, \gamma_p \}.
+\theta = \{\sigma^2, \mu, \phi_1, \dots, \phi_p \}.
 \end{equation}
 \\
 
 Given the posterior distribution $p(\theta | x_{1:T_n})$, the predictive distribution associated with $x_{T_n +h}$ is given by
 \begin{equation}
+\label{forecastDist}
 p(x_{T_n + h} | x_{1:T_n}) = \int_{\theta} p(x_{T_n + h} | x_{1:T_n}, \theta)p(\theta | x_{1:T_n})d\theta.
 \end{equation}
 The loss function associated with this value is given by $L(n, h)$ and is measured by the predictive logscore,
 \begin{equation}
+\label{loss:logscore}
 L(n, h) = \log(p(x_{T_n + h} | x_{1:T_n}))
 \end{equation}
 
@@ -455,6 +457,35 @@ where $I(\cdot)$ is the indicator function, which equals one if the argument is 
 
 \section{Simulation Results}
 
+We simulate $N = 100$ datasets of length $200$ from the following AR3 model,
+\begin{equation}
+\label{AR3}
+x_t = \mu + \phi_1 (x_{t-1} - \mu) + \phi_2 (x_{t-2} - \mu) + \phi_3 (x_{t-3} - \mu) + e_t
+\end{equation}
+where $e_t \sim N(0, \sigma^2)$. 
+The parameters are $\theta = \{\log(\sigma^2), \mu, \phi_1, \phi_2, \phi_3 \}$, with the prior
+\begin{equation}
+\label{prior}
+\theta \sim N(\boldsymbol{0}, 10 I)
+\end{equation}
+where $I$ denotes the identity matrix.
+
+In each simulation, $\mu$ and each $\phi$ are drawn from an $N(0, 1)$ distribution, accepting only draws where each $\phi$ lies in the AR3 stationary region. $\sigma^{-2}$ is simulated from a $G(5, 5)$ distribution.
+\\
+
+At each time $t = 50, 51, \dots, 200$, the MCMC posterior distribution $p(\theta | x_{1:t})$ is simulated by 15000 draws from a Random Walk Metropolis Hastings MCMC algoritihm, discarding the first 10000 as a burn in period.
+\\
+
+VB approximations $q_{VB}(\theta | x_{1:T_n})$ are fit at times $T_1 = 50, T_2 = 75, T_3 = 100, T_4 = 125, T_5 = 150, T_6 = 175$ and $T_7 = 200$, and these are used to construct importance sampled corrections $p^*_{VB}(\theta | x_{1:t})$ for each $t = 50, 51, \dots, 200$ following Section \ref{sec:IS}. UVB approximations $p^*_{UVB}(\theta | x_{1:t})$ are constructed in the same manner, where the distribution $q_{UVB}(\theta | x_{1:T_n})$ for $n >1$ is fit by updating the previous $q_{UVB}(\theta | x_{1:T_{n-1}})$ following Section \ref{sec:UVB}. In each case, the distributional family for $q$ is chosen to be a $K = 1, 2$, or $3$ component mixture of multivariate normal distributions.
+\\
+
+For each time period, $K$, and approximate inferential method: VB and UVB with and without importance samping correction, one step forecast distributions are made by (\ref{forecastDist}) and evaluated with the forecast logscore loss function, (\ref{loss:logscore}) relative to the exact inference logscore provided by MCMC. Plots of the median difference between the approximate and exact inferences. The top right panels display UVB when $K = 1$, where the approximation error in each update compounds over time. The multivariate normal approximation when $K = 2$ or $3$ appears to have sufficient ability to approximate the true posterior, and the approximation error does not appear to increase with $t$. The use of importance sampling brings the approximate logscores much closer to the exact values, though UVB still accumulates errors when $K = 1$.
+
+\begin{figure}
+\centering
+\includegraphics[width = 0.8\textwidth, height = 0.25\textheight]{AR3ls}
+\caption{VB logscore minus MCMC logscore for standard VB (left side) and Updating VB (right side) for $K = 1, 2$, and $3$ component mixtures of multivariate normal approximations. Each VB algorithm appears to perform as well as MCMC, though the approximation error of the $K = 1$ UVB cumulates as $t$ increases, increasing the forecast error relative to exact inference.}
+\end{figure}
 
 \bibliographystyle{asa}
 \bibliography{references}
