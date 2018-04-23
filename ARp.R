@@ -11,8 +11,8 @@ sourceCpp('ARP.cpp')
 
 forecast <- NULL
 
-min <- 1
-max <- 3
+min <- 251
+max <- 375
 
 T <- 200
 initialBatch <- 50
@@ -52,7 +52,7 @@ if(rep == min){
     attr(timePerIter, 'units') = 'secs'
     timePerIter <- timePerIter * 60
   } else if(attr(timePerIter, 'units') == 'hours'){
-    attr(timePerIter, 'units') = 'hours'
+    attr(timePerIter, 'units') = 'secs'
     timePerIter <- timePerIter * 3600
   }
   print(paste0('Iteration: ', rep, ' Estimated Finishing Time: ', Sys.time() + (max + 1 - rep) * timePerIter))
@@ -160,7 +160,7 @@ for(K in 1:3){
                                lags = lags)
             
             VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[min(5000, VB$iter)]
+            ELBO <- VB$LB[VB$iter - 1]
             
           } else {
             # Otherwise use score gradients
@@ -175,7 +175,7 @@ for(K in 1:3){
                                     lags = lags)
             
             VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[min(5000, VB$iter)]
+            ELBO <- VB$LB[VB$iter - 1]
             
           }
         } else {
@@ -192,7 +192,7 @@ for(K in 1:3){
                                  lags = lags)
               
               VBfit[,t] <- VB$lambda
-              ELBO <- VB$LB[min(5000, VB$iter)]
+              ELBO <- VB$LB[VB$iter - 1]
               
               
             } else {
@@ -209,7 +209,7 @@ for(K in 1:3){
               
               
               VBfit[,t] <- VB$lambda
-              ELBO <- VB$LB[min(5000, VB$iter)]
+              ELBO <- VB$LB[VB$iter - 1]
             }
           } else {
             # Otherwise apply UVB
@@ -230,7 +230,7 @@ for(K in 1:3){
               
               
               VBfit[,t] <- VB$lambda
-              ELBO <- VB$LB[min(5000, VB$iter)]
+              ELBO <- VB$LB[VB$iter - 1]
   
             } else {
               # Score gradients
@@ -242,7 +242,7 @@ for(K in 1:3){
                 updateVarInv[,,k] <- diag(1/sd^2)
                 dets[k] <- 1 / prod(sd)
               }
-              updateZ <- UVBfit[dim*K*2 + 1:K, t-1] 
+              updateZ <- VBfit[dim*K*2 + 1:K, t-1] 
               updateWeight <- exp(updateZ) / sum(exp(updateZ))
               
               VB<- fitVBScore(data = x[(data[t]+1-lags):data[t+1]],
@@ -258,7 +258,7 @@ for(K in 1:3){
                                        lags = lags)
               
               VBfit[,t] <- VB$lambda
-              ELBO <- VB$LB[min(5000, VB$iter)]
+              ELBO <- VB$LB[VB$iter - 1]
               
             }
             
@@ -383,9 +383,15 @@ for(K in 1:3){
 
 write.csv(forecast, paste0('results/AR3_', min, '_', max, '.csv'), row.names = FALSE)
 
+forecast <- rbind(readr::read_csv('results/AR3_1_125.csv'),
+                  readr::read_csv('results/AR3_126_250.csv'),
+                  readr::read_csv('results/AR3_251_375.csv'),
+                  readr::read_csv('results/AR3_376_500.csv'))
+write.csv(forecast, 'results/AR3_full.csv', row.names = FALSE)
+library(tidyverse)
 
 forecast %>% 
-  filter(t <= 300) %>%
+  select(-runTime, -ESS, -ELBO) %>%
   spread(inference, ls) %>%
   mutate(`VB-IS` = `VB-IS` - MCMC,
          `UVB-IS` = `UVB-IS` - MCMC,
@@ -395,16 +401,23 @@ forecast %>%
   select(t, K, `VB-IS`, `UVB-IS`, VB, UVB) %>%
   gather(inference, diff, -t, -K) %>%
   mutate(inference = factor(inference, levels = c('VB', 'VB-IS', 'UVB', 'UVB-IS'))) %>%
-  group_by(inference, t, K) %>%
   filter(!is.na(diff)) %>%
-  summarise(med = median(diff)) %>%
-  ggplot() + geom_line(aes(t, med)) +
-  geom_hline(aes(yintercept = 0), colour = 'red') +
+  mutate(t = floor((t-1) / 5)) %>%
+  group_by(inference, t, K) %>%
+  summarise(med = median(diff),
+            l50 = quantile(diff, 0.25),
+            u50 = quantile(diff, 0.75)) %>%
+  ggplot() +
+  geom_ribbon(aes(t, ymin = l50, ymax = u50), fill = 'red', alpha = 0.4) +
+  geom_line(aes(t, med), colour = 'red', size = 1) +
+  geom_hline(aes(yintercept = 0), colour = 'black') +
   facet_grid(K ~ inference) + 
   theme_bw() + 
   labs(x = 't', y = 'Median Difference in Logscores (Approximate Inference - Exact)')
 
-filter(t <= 300) %>%
+
+forecast %>% 
+  select(-runTime, -ESS, -ELBO) %>%
   spread(inference, ls) %>%
   mutate(`VB-IS` = `VB-IS` - MCMC,
          `UVB-IS` = `UVB-IS` - MCMC,
@@ -414,15 +427,50 @@ filter(t <= 300) %>%
   select(t, K, `VB-IS`, `UVB-IS`, VB, UVB) %>%
   gather(inference, diff, -t, -K) %>%
   mutate(inference = factor(inference, levels = c('VB', 'VB-IS', 'UVB', 'UVB-IS'))) %>%
-  group_by(inference, t, K) %>%
   filter(!is.na(diff)) %>%
-  summarise(med = median(diff)) %>%
-  ggplot() + geom_line(aes(t, med)) +
-  geom_hline(aes(yintercept = 0), colour = 'red') +
+  mutate(t = floor((t-1) / 20),
+         t = ifelse(t == 20, 19, t)) %>%
+  ggplot() +
+  geom_boxplot(aes(factor(t), diff)) + 
   facet_grid(K ~ inference) + 
-  theme_bw()
-  
-forecast %>%
-  filter(inference != 'MCMC' & K == 1) %>%
-  ggplot() + geom_line(aes(t, runTime)) + facet_wrap(~inference)
+  coord_cartesian(ylim = c(-0.15, 0.5)) + 
+  theme_bw() + 
+  labs(x = 't', y = 'Median Difference in Logscores (Approximate Inference - Exact)')
+
+
+forecast %>% 
+  filter(inference != 'MCMC' & t %% 25 == 0) %>%
+  select(-ls, -ESS, -ELBO) %>%
+  spread(inference, runTime) %>%
+  mutate(IS = (`VB-IS` - `UVB-IS`) / `VB-IS` * 100,
+         NoIS = (VB - UVB) / VB * 100,
+         t = t - 100) %>%
+  gather(inference, diff, IS, NoIS) %>%
+  mutate(inference = factor(inference, levels = c('IS', 'NoIS'))) %>%
+  group_by(inference, t, K) %>%
+  summarise(mean = mean(diff),
+            med = median(diff),
+            l50 = quantile(diff, 0.25),
+            u50 = quantile(diff, 0.75)) %>%
+  ungroup() %>%
+  ggplot() +# geom_line(aes(t, mean)) +
+  geom_ribbon(aes(t, ymin = l50, ymax = u50), fill = 'red', alpha = 0.4) +
+  geom_line(aes(t, med), colour = 'red', size = 1) +
+  facet_grid(K ~ inference) + 
+  theme_bw() + 
+  labs(x = 't', y = 'UVB Mean % Improvement in Runtime')
+
+forecast %>% 
+  filter(inference %in% c('VB-IS', 'UVB-IS')) %>%
+  mutate(t = (t-1) %% 25) %>%
+  group_by(inference, t, K) %>%
+  summarise(medESS = median(ESS),
+            lower = quantile(ESS, 0.25),
+            upper = quantile(ESS, 0.75)) %>%
+  ungroup() %>%
+  ggplot() + geom_line(aes(t, medESS), colour = 'red', size = 1) +
+  geom_ribbon(aes(x = t, ymin = lower, ymax = upper), alpha = 0.2, fill = 'red') + 
+  facet_grid(K ~ inference) + 
+  theme_bw() + 
+  labs(x = 't', y = 'IS mean effective sample size')
   

@@ -154,54 +154,15 @@ mat shuffle(mat sobol){
 
 // Pieces for the mixture approximations are shared between both prior specifications
 
-struct mixNormal {
+struct mixNormalSPSA {
   const mat data;
   const vec epsilon;
-  mixNormal(const mat& dataIn, const vec& epsIn) :
-    data(dataIn), epsilon(epsIn) {}
-  template <typename T> //
-  T operator ()(const Matrix<T, Dynamic, 1>& lambda)
-    const{
-    using std::log; using std::exp; using std::pow; using std::sqrt; using std::lgamma; using std::fabs;
-    
-    int N = data.n_cols;
-    int M = data.n_rows;
-    
-    Matrix<T, Dynamic, 1> theta(2);
-    theta(0) = lambda(0) + lambda(2) * epsilon(0);
-    theta(1) = lambda(1) + lambda(3) * epsilon(0) + lambda(4) * epsilon(1);
-    
-    Matrix<T, Dynamic, 1> z(N), pi(N);
-    for(int i = 0; i < N; ++i){
-      z(i) = lambda(5 + i) + lambda(5 + N + i) * epsilon(2 + i);
-      pi(i) = 1.0 / (1 + exp(-z(i)));
-    }
-    
-    T logPrior = - pow(theta(0), 2) / 20 - pow(theta(1), 2) / 20;
-    
-    T logdetJ = log(fabs(lambda(2))) + log(fabs(lambda(4)));
-    for(int i = 0; i < N; ++i){
-      logdetJ += log(fabs(lambda(5 + N + i))) + z(i) - 2 * log(exp(z(i)) + 1);
-    }
-    
-    T logLik = 0;
-    for(int i = 0; i < N; ++i){
-      for(int j = 0; j < M; ++j){
-        logLik += log(
-          pi(i) * pow(2 * 3.14159, -0.5) * exp(-pow(data(j, i) - theta(0), 2) / 2)  +
-          (1 - pi(i)) * pow(2 * 3.14159, -0.5) * exp(-pow(data(j, i) - theta(1), 2) / 2)
-        );
-      }
-    }
-    return logPrior + logdetJ + logLik;
-  }
-};
-
-struct mixNormalVar {
-  const mat data;
-  const vec epsilon;
-  mixNormalVar(const mat& dataIn, const vec& epsIn) :
-    data(dataIn), epsilon(epsIn) {}
+  const vec mean;
+  const mat Linv;
+  const mat piPrior;
+  const bool update;
+  mixNormalSPSA(const mat& dataIn, const vec& epsIn, const vec& meanIn, const mat& LinvIn, const mat& piPriorIn, const bool& updateIn) :
+    data(dataIn), epsilon(epsIn), mean(meanIn), Linv(LinvIn), piPrior(piPriorIn), update(updateIn) {}
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
     const{
@@ -225,7 +186,25 @@ struct mixNormalVar {
       pi(i) = 1.0 / (1 + exp(-z(i)));
     }
     
-    T logPrior = - pow(theta(0), 2) / 20 - pow(theta(1), 2) / 20 - pow(theta(2), 2) / 20 - pow(theta(3), 2) / 20;
+    T logPrior = 0;
+    Matrix<T, Dynamic, 1> kernel(4);
+    kernel.fill(0);
+    for(int i = 0; i < 4; ++i){
+      for(int j = 0; j <= i; ++j){
+        kernel(i) += (theta(j) - mean(j)) * Linv(i, j);
+      }
+      logPrior += - 0.5 * pow(kernel(i), 2);
+    }
+    if(update){
+      for(int i = 0; i < N; ++i){
+        logPrior += pow(z(i) - piPrior(i, 0), 2) / (2 * piPrior(i, 1));
+      }
+    } else {
+      for(int i = 0; i < N; ++i){
+        logPrior += (piPrior(i, 0) - 1) * log(pi(i)) + (piPrior(i, 1) - 1) * log(1 - pi(i));
+      }
+    }
+  
     
     T logdetJ = theta(0) + theta(1) + log(fabs(lambda(4))) + log(fabs(lambda(9))) + log(fabs(lambda(14))) + log(fabs(lambda(19)));
     for(int i = 0; i < N; ++i){
@@ -244,6 +223,166 @@ struct mixNormalVar {
     return logPrior + logdetJ + logLik;
   }
 };
+
+// [[Rcpp::export]]
+Rcpp::List mixtureNormalSPSA(mat data, Rcpp::NumericMatrix lambdaIn, vec epsilon, vec mean, mat Linv, mat piPrior, bool update = false){
+  Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
+  double eval;
+  int dim = lambda.rows();
+  Matrix<double, Dynamic, 1> grad(dim);
+  
+  mixNormalSPSA logp(data, epsilon, mean, Linv, piPrior, update);
+  
+  stan::math::set_zero_all_adjoints();
+  stan::math::gradient(logp, lambda, eval, grad);
+
+  return Rcpp::List::create(Rcpp::Named("grad") = grad,
+                            Rcpp::Named("val") = eval);
+}
+
+
+struct Qlogdens {
+  const vec theta;
+  const mat piK;
+  const int K;
+  Qlogdens(const vec& thetaIn, const mat& piIn, const int& KIn) :
+    theta(thetaIn), piK(piIn), K(KIn) {}
+  template <typename T> //
+  T operator ()(const Matrix<T, Dynamic, 1>& lambda)
+    const{
+    using std::log; using std::exp; using std::pow; using std::sqrt; using std::lgamma;
+    
+    int N = piK.n_rows;
+    
+    T determinant = exp(lambda(K));
+    for(int i = 1; i < K; ++i){
+      determinant *= exp(lambda(K + i));
+    }
+    determinant = 1.0 / determinant;
+
+    T kernel = 0;
+    for(int i = 0; i < K; ++i){
+      kernel += pow((theta(i) - lambda(i)) / exp(lambda(K + i)), 2);
+    }
+    T logMVN = log(determinant) - 0.5 * kernel;
+    
+    T logDir = 0;
+    Matrix<T, Dynamic, 1> lambdaSums(N);
+    lambdaSums.fill(0);
+    for(int i = 0; i < N; ++i){
+      for(int j = 0; j < K; ++j){
+        logDir += (exp(lambda(2*K +i*K + j)) - 1) * log(piK(i, j)) - lgamma(exp(lambda(2*K + i*K + j)));
+        lambdaSums(i) += exp(lambda(2*K + i*K + j));
+      }
+      logDir += lgamma(lambdaSums(i));
+    }
+    return logMVN + logDir;
+  }
+};
+
+double pLogDensSingle(mat y, vec theta, mat pi, vec mean, mat Linv, mat piPrior){
+  int N = y.n_cols;
+  int T = y.n_rows;
+
+  // Evaluate log(p(theta))
+  double logPrior = 0;
+  for(int i = 0; i < 4; ++i){
+    double kernel = 0;
+    for(int j = 0; j <= i; ++j){
+      kernel += (theta(j) - mean(j)) * Linv(i, j);
+    }
+    logPrior += - 0.5 * pow(kernel, 2);
+  }
+  for(int i = 0; i < N; ++i){
+    logPrior += (piPrior(i, 0) - 1) * log(pi(i)) + (piPrior(i, 1) - 1) * log(1 - pi(i));
+  }
+  
+  double logLik = 0;
+  for(int i = 0; i < N; ++i){
+    for(int t = 0; t < T; ++t){
+      logLik += log(
+        pi(i) * pow(2 * 3.14159 * exp(theta(0)), -0.5) * exp(-pow(y(t, i) - theta(2), 2) / (2 * exp(theta(0))))  +
+          (1 - pi(i)) * pow(2 * 3.14159 * exp(theta(1)), -0.5) * exp(-pow(y(t, i) - theta(3), 2) / (2 * exp(theta(1))))
+      );
+    }
+  }
+  return logPrior + logLik;
+  
+  
+  
+}
+
+double pLogDensMixture(mat y, vec theta, mat pi, mat mean, cube SigInv, mat piPrior, vec weights, vec dets){
+  int N = y.n_cols;
+  int T = y.n_rows;
+  
+  int mix = weights.n_rows;
+  // Evaluate log(p(theta)), start by evaluative the quadratic in the MVN exponents
+  double prior = 0;
+  for(int k = 0; k < mix; ++k){
+    prior += weights(k) * pow(6.283185, -3) * dets(k) * exp(-0.5 * as_scalar((theta - mean.col(k)).t() * SigInv.slice(k) * (theta - mean.col(k))));
+  }
+  double logPrior = log(prior);
+  
+  for(int i = 0; i < N; ++i){
+    logPrior += (piPrior(i, 0) - 1) * log(pi(i)) + (piPrior(i, 1) - 1) * log(1 - pi(i));
+  }
+  
+  double logLik = 0;
+  for(int i = 0; i < N; ++i){
+    for(int t = 0; t < T; ++t){
+      logLik += log(
+        pi(i) * pow(2 * 3.14159 * exp(theta(0)), -0.5) * exp(-pow(y(t, i) - theta(2), 2) / (2 * exp(theta(0))))  +
+          (1 - pi(i)) * pow(2 * 3.14159 * exp(theta(1)), -0.5) * exp(-pow(y(t, i) - theta(3), 2) / (2 * exp(theta(1))))
+      );
+    }
+  }
+  return logPrior + logLik;
+}
+
+// These models are parameterised by the mean and log standard deviations
+// [[Rcpp::export]]
+Rcpp::List mixtureNormalSPMA(mat data, Rcpp::NumericMatrix lambdaIn, vec theta, mat pi, int K, vec mean, mat Linv, mat piPrior){
+  Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
+  double qEval;
+  int dim = lambda.rows();
+  Matrix<double, Dynamic, 1> grad(dim);
+  
+  Qlogdens logQ(theta, pi, K);
+  stan::math::set_zero_all_adjoints();
+  stan::math::gradient(logQ, lambda, qEval, grad);
+  
+  double logp = pLogDensSingle(data, theta, pi, mean, Linv, piPrior);
+  double elbo = logp - qEval;
+  for(int i = 0; i < dim; ++i){
+    grad(i) *= elbo;
+  }
+  return Rcpp::List::create(Rcpp::Named("grad") = grad,
+                            Rcpp::Named("val") = elbo);
+}
+
+// [[Rcpp::export]]
+Rcpp::List mixtureNormalMPMA(mat data, Rcpp::NumericMatrix lambdaIn, vec theta, mat pi, int K, mat mean, cube SigInv, mat piPrior, vec weights, vec dets){
+  Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
+  double qEval;
+  int dim = lambda.rows();
+  Matrix<double, Dynamic, 1> grad(dim);
+  
+  Qlogdens logQ(theta, pi, K);
+  stan::math::set_zero_all_adjoints();
+  stan::math::gradient(logQ, lambda, qEval, grad);
+  
+  double logp = pLogDensMixture(data, theta, pi, mean, Linv, piPrior, weights, dets);
+  double elbo = logp - qEval;
+  for(int i = 0; i < dim; ++i){
+    grad(i) *= elbo;
+  }
+  return Rcpp::List::create(Rcpp::Named("grad") = grad,
+                            Rcpp::Named("val") = elbo);
+}
+
+
+
 
 struct mixNormalP {
   const mat data;
@@ -286,248 +425,6 @@ struct mixNormalP {
     return logPrior + logLik;
   }
 };
-
-struct Qlogdens {
-  const vec theta;
-  const mat piK;
-  const int K;
-  Qlogdens(const vec& thetaIn, const mat& piIn, const int& KIn) :
-    theta(thetaIn), piK(piIn), K(KIn) {}
-  template <typename T> //
-  T operator ()(const Matrix<T, Dynamic, 1>& lambda)
-    const{
-    using std::log; using std::exp; using std::pow; using std::sqrt; using std::lgamma;
-    
-    int N = piK.n_rows;
-    
-    T determinant = exp(lambda(K));
-    for(int i = 1; i < K; ++i){
-      determinant *= exp(lambda(K + i));
-    }
-    determinant = 1.0 / determinant;
-
-    T kernel = 0;
-    for(int i = 0; i < K; ++i){
-      kernel += pow((theta(i) - lambda(i)) / exp(lambda(K + i)), 2);
-    }
-    T logMVN = log(determinant) - 0.5 * kernel;
-    
-    T logDir = 0;
-    Matrix<T, Dynamic, 1> lambdaSums(N);
-    lambdaSums.fill(0);
-    for(int i = 0; i < N; ++i){
-      for(int j = 0; j < K; ++j){
-        logDir += (exp(lambda(2*K +i*K + j)) - 1) * log(piK(i, j)) - lgamma(exp(lambda(2*K + i*K + j)));
-        lambdaSums(i) += exp(lambda(2*K + i*K + j));
-      }
-      logDir += lgamma(lambdaSums(i));
-    }
-    return logMVN + logDir;
-  }
-};
-
-double pLogDens(mat y, vec theta, mat pi, mat prior, int K){
-  int N = y.n_cols;
-  int T = y.n_rows;
-
-  // Evaluate log(p(theta))
-  double logPrior = 0;
-  for(int i = 0; i < K; ++i){
-    logPrior += - pow(theta(i), 2) / (20);
-  }
-  double logLik = 0;
-  for(int i = 0; i < N; ++i){
-    for(int t = 0; t < T; ++t){
-      double likelihood = 0;
-      for(int j = 0; j < K; ++j){
-        likelihood += pi(i, j) * pow(2 * 3.14159, -0.5) * exp(-pow(y(t, i) - theta(j), 2) / 2);
-      }
-      logLik += log(likelihood);
-    }
-  }
-  return logPrior + logLik;
-}
-
-// These models are parameterised by the mean and log standard deviations
-// [[Rcpp::export]]
-Rcpp::List mixtureNormal(mat data, Rcpp::NumericMatrix lambdaIn, vec theta, mat piK, mat prior, int K){
-  Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
-  double qEval;
-  int dim = lambda.rows();
-  Matrix<double, Dynamic, 1> grad(dim);
-  
-  Qlogdens logQ(theta, piK, K);
-  stan::math::set_zero_all_adjoints();
-  stan::math::gradient(logQ, lambda, qEval, grad);
-  
-  double logp = pLogDens(data, theta, piK, prior, K);
-  double elbo = logp - qEval;
-  for(int i = 0; i < dim; ++i){
-    grad(i) *= elbo;
-  }
-  return Rcpp::List::create(Rcpp::Named("grad") = grad,
-                            Rcpp::Named("val") = elbo);
-}
-
-// [[Rcpp::export]]
-Rcpp::List mixtureNormalRP(mat data, Rcpp::NumericMatrix lambdaIn, vec epsilon, bool knownVar = true){
-  Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
-  double eval;
-  int dim = lambda.rows();
-  Matrix<double, Dynamic, 1> grad(dim);
-  if(knownVar){
-    mixNormal logp(data, epsilon);
-    stan::math::set_zero_all_adjoints();
-    stan::math::gradient(logp, lambda, eval, grad);
-  } else {
-    mixNormalVar logp(data, epsilon);
-    stan::math::set_zero_all_adjoints();
-    stan::math::gradient(logp, lambda, eval, grad);
-  }
-  
-  return Rcpp::List::create(Rcpp::Named("grad") = grad,
-                            Rcpp::Named("val") = eval);
-}
-
-struct mixNormalUpdate {
-  const mat data;
-  const vec epsilon;
-  const int K;
-  const vec mean;
-  const mat Linv;
-  const mat piPrior;
-  mixNormalUpdate(const mat& dataIn, const vec& epsIn, const int& kIn, const vec& meanIn, const mat& LinvIn, const mat& piIn) :
-    data(dataIn), epsilon(epsIn), K(kIn), mean(meanIn), Linv(LinvIn), piPrior(piIn) {}
-  template <typename T> //
-  T operator ()(const Matrix<T, Dynamic, 1>& lambda)
-    const{
-    using std::log; using std::exp; using std::pow; using std::sqrt; using std::lgamma; using std::fabs;
-    
-    int N = data.n_cols;
-    int M = data.n_rows;
-    
-    Matrix<T, Dynamic, 1> theta(2);
-    theta(0) = lambda(0) + lambda(2) * epsilon(0);
-    theta(1) = lambda(1) + lambda(3) * epsilon(0) + lambda(4) * epsilon(1);
-    
-    Matrix<T, Dynamic, 1> z(N), pi(N);
-    for(int i = 0; i < N; ++i){
-      z(i) = lambda(5 + i) + lambda(5 + N + i) * epsilon(2 + i);
-      pi(i) = 1.0 / (1 + exp(-z(i)));
-    }
-
-    T logPrior = 0;
-    Matrix<T, Dynamic, 1> kernel(2);
-    kernel.fill(0);
-    for(int i = 0; i < 2; ++i){
-      for(int j = 0; j <= i; ++j){
-        kernel(i) += (theta(j) - mean(j)) * Linv(i, j);
-      }
-      logPrior += - 0.5 * pow(kernel(i), 2);
-    }
-    for(int i = 0; i < N; ++i){
-      logPrior += log((1 / pi(i) + 1 / (1 - pi(i))) * 1.0 / sqrt(2 * 3.14159 * piPrior(i, 1)) * 
-        exp(-pow(log(pi(i)/(1-pi(i))) - piPrior(i, 0),  2) / (2 * piPrior(i, 1))));
-    }
-    
-    T logdetJ = log(fabs(lambda(2))) + log(fabs(lambda(4)));
-    for(int i = 0; i < N; ++i){
-      logdetJ += log(fabs(lambda(5 + N + i))) + z(i) - 2 * log(exp(z(i)) + 1);
-    }
-    
-    T logLik = 0;
-    for(int i = 0; i < N; ++i){
-      for(int j = 0; j < M; ++j){
-        logLik += log(pi(i) * pow(2 * 3.14159, -0.5) * exp(-pow(data(j, i) - theta(0), 2) / 2)  +
-          (1 - pi(i)) * pow(2 * 3.14159, -0.5) * exp(-pow(data(j, i) - theta(1), 2) / 2));
-      }
-    }
-    return logPrior + logdetJ + logLik;
-  }
-};
-
-struct mixNormalVarUpdate {
-  const mat data;
-  const vec epsilon;
-  const int K;
-  const vec mean;
-  const mat Linv;
-  const mat piPrior;
-  mixNormalVarUpdate(const mat& dataIn, const vec& epsIn, const int& kIn, const vec& meanIn, const mat& LinvIn, const mat& piIn) :
-    data(dataIn), epsilon(epsIn), K(kIn), mean(meanIn), Linv(LinvIn), piPrior(piIn) {}
-  template <typename T> //
-  T operator ()(const Matrix<T, Dynamic, 1>& lambda)
-    const{
-    using std::log; using std::exp; using std::pow; using std::sqrt; using std::lgamma; using std::fabs;
-    
-    int N = data.n_cols;
-    int M = data.n_rows;
-    
-    Matrix<T, Dynamic, 1> theta(4);
-    for(int i = 0; i < 4; ++i){
-      theta(i) = lambda(i);
-      for(int j = 0; j <= i; ++j){
-        theta(i) += lambda(4 + 4*i + j) * epsilon(j);
-      }
-    }
-    
-    T sigmaSq1 = exp(theta(0)), sigmaSq2 = exp(theta(1));
-    Matrix<T, Dynamic, 1> z(N), pi(N);
-    for(int i = 0; i < N; ++i){
-      z(i) = lambda(20 + i) + lambda(20 + N + i) * epsilon(4 + i);
-      pi(i) = 1.0 / (1 + exp(-z(i)));
-    }
-    
-    T logPrior = 0;
-    Matrix<T, Dynamic, 1> kernel(2);
-    kernel.fill(0);
-    for(int i = 0; i < 2; ++i){
-      for(int j = 0; j <= i; ++j){
-        kernel(i) += (theta(j) - mean(j)) * Linv(i, j);
-      }
-      logPrior += - 0.5 * pow(kernel(i), 2);
-    }
-    for(int i = 0; i < N; ++i){
-      logPrior += log((1 / pi(i) + 1 / (1 - pi(i))) * 1.0 / sqrt(2 * 3.14159 * piPrior(i, 1)) * 
-        exp(-pow(log(pi(i)/(1-pi(i))) - piPrior(i, 0),  2) / (2 * piPrior(i, 1))));
-    }
-    
-    T logdetJ = theta(0) + theta(1) + log(fabs(lambda(4))) + log(fabs(lambda(9))) + log(fabs(lambda(14))) + log(fabs(lambda(19)));
-    for(int i = 0; i < N; ++i){
-      logdetJ += log(fabs(lambda(20 + N + i))) + z(i) - 2 * log(exp(z(i)) + 1);
-    }
-    
-    T logLik = 0;
-    for(int i = 0; i < N; ++i){
-      for(int j = 0; j < M; ++j){
-        logLik += log(pi(i) * pow(2 * 3.14159 * sigmaSq1, -0.5) * exp(-pow(data(j, i) - theta(2), 2) / (2 * sigmaSq1))  +
-          (1 - pi(i)) * pow(2 * 3.14159 * sigmaSq2, -0.5) * exp(-pow(data(j, i) - theta(3), 2) / (2 * sigmaSq2)));
-      }
-    }
-    return logPrior + logdetJ + logLik;
-  }
-};
-
-// [[Rcpp::export]]
-Rcpp::List mixtureNormalRPU(mat data, Rcpp::NumericMatrix lambdaIn, vec epsilon, int K, vec mean, mat Linv, mat pi, bool knownVar = true){
-  Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
-  double eval;
-  int dim = lambda.rows();
-  Matrix<double, Dynamic, 1> grad(dim);
-  if(knownVar){
-    mixNormalUpdate logp(data, epsilon, K, mean, Linv, pi);
-    stan::math::set_zero_all_adjoints();
-    stan::math::gradient(logp, lambda, eval, grad);
-  } else {
-    mixNormalVarUpdate logp(data, epsilon, K, mean, Linv, pi);
-    stan::math::set_zero_all_adjoints();
-    stan::math::gradient(logp, lambda, eval, grad);
-  }
- 
-  
-  return Rcpp::List::create(Rcpp::Named("grad") = grad,
-                            Rcpp::Named("val") = eval);
-}
 
 // [[Rcpp::export]]
 Rcpp::List mixtureNormalGRP(mat data, Rcpp::NumericMatrix thetaIn, Rcpp::NumericMatrix lambdaIn,
