@@ -498,8 +498,6 @@ Figure \ref{fig:timing} plots the median and 50\% interval of the decrease in co
 \label{fig:timing}
 \end{figure}
 
-Note: Need to re-do picture to show the cost of importance sampling. Maybe do cumulative logscore per unit of time or something similar instead of the current plot.
-
 \subsection{Mixture Model Clustering}
 
 We consider the two component mixture normal model for $i = 1, \dots N$ and $t = 1, \dots, T_n$ given by
@@ -508,13 +506,13 @@ We consider the two component mixture normal model for $i = 1, \dots N$ and $t =
 x_{i, t} \sim \sum_{j=1}^2 \pi_{j} N(\mu_j, \sigma^2_{j}).
 \end{equation}
 where $\pi_2 = 1 - \pi_1$. Data is collected and denoted by $x_{i, 1:T_n} = \{x_{i, t} | t = 1, \dots, T_n\}$ and $x_{1:N, 1:T_n} = \{x_{i, 1:T_n} | i = 1, \dots, N \}$.
+\\
 
 We augment the model with a set of auxiliary variables $k_i$ such that
 \begin{equation}
 \label{mixNormalDGP2}
 x_{i, t} | k_i = j \sim  N(\mu_j, \sigma^2_{j}).
 \end{equation}
-\\
 
 Collecting $\theta = \{\log(\sigma^2_1), \log(\sigma^2_2), \mu_1, \mu_2 \}$, we consider the priors
 \begin{align}
@@ -522,23 +520,49 @@ Collecting $\theta = \{\log(\sigma^2_1), \log(\sigma^2_2), \mu_1, \mu_2 \}$, we 
 k_i | \pi_1 \sim Bin(1, \pi_1), \label{kPrior} \\
 \pi_1 \sim Beta(\alpha, \beta). \label{piPrior}
 \end{align}
-\\
 
 Note that (\ref{kPrior}) and (\ref{piPrior}) imply that 
 \begin{equation}
 \label{kMarginal}
-p(k_i = j) = \frac{\Beta(j + \alpha, \beta - j + 1)}{\Beta(\alpha, \beta)}
+p(k_i = j) = \frac{\mathcal{B}(j + \alpha, \beta - j + 1)}{\mathcal{B}(\alpha, \beta)}
 \end{equation}
-where $\Beta(\cdot, \cdot)$ denotes the Beta function.
+where $\mathcal{B}(\cdot, \cdot)$ denotes the Beta function.
 
-We create 500 datasets with $N = 100$ and $T = 500$, and infer the posterior distribution $p(\theta, \k_1, \dots, k_N | x_{1:N, 1:T_n})$ for $T_n = 75 + 25n$ using each inferential method: MCMC, and both VB and UVB with and without importance sampling.
+We create 500 datasets with $N = 50$ and $T = 300$, and infer the posterior distribution $p(\theta, k_1, \dots, k_N | x_{1:N, 1:T_n})$ for $T_n = 75 + 25n$ for $n = 1, 2, \dots, 9$ using each inferential method: MCMC, and both VB and UVB with and without importance sampling.
+\\
 
-The use of auxiliary variables $k$ allows the so called full conditional posterior distribution $p(k_i | \theta, x_{i, 1:T_n})$ to be known exactly, and hence we employ variational approximations of the form 
+The use of auxiliary variables $k$ allows each of the so called full conditional distributions $p(k_i | \theta, x_{i, 1:T_n})$ to be known exactly,
+\begin{equation}
+\label{mixNormalKFC}
+p(k_i = j| \theta, x_{i, 1:T_n}) = \frac{p(x_{i, 1:T_n} | \theta, k_i = j)p(k_i = j)}{\sum_{j=1}^2 p(x_{i, 1:T_n} | \theta, k_i = j)p(k_i = j)}
+\end{equation}
+and hence we employ variational approximations of the form 
 \begin{equation}
 \label{mixNormalQ}
-q_{\lambda}(\theta, k_1, \dots, k_N | x_{1:N, 1:T_n}) = q_{\lambda}(\theta | x_{1:N, 1:T_n}) \prod_{i=1}^N p(k_i | \theta, x_{i, 1:T_n})
+q_{\lambda_n}(\theta, k_1, \dots, k_N | x_{1:N, 1:T_n}) = q_{\lambda_n}(\theta | x_{1:N, 1:T_n}) \prod_{i=1}^N p(k_i | \theta, x_{i, 1:T_n})
 \end{equation}
 where $q_{\lambda}(\theta | x_{1:N, 1:T_n})$ is a $K = 1, 2,$ or $3$ component mixture of multivariate normal distributions. 
+\\
+
+UVB can repeatedly be applied at each time $T_n$ if the distribution at $T_{n-1}$ can be written in the same form as the prior to apply the VB update
+\begin{equation}
+\label{mixNormalUpdate}
+\hat{p}(\theta, k_1, \dots, k_N | x_{1:T_n}) \propto \prod_{i=1}^N p(x_{i, T_{n-1}+1:T_n} | \theta, k_i)p(k_i | x_{i, 1:T_{n-1}}) q_{\lambda_{n-1}}(\theta | x_{i, 1:T_{n-1}}).
+\end{equation}
+This requires the marginal posterior distributions $p(k_i | x_{i, 1:T_{n-1}})$, which we approximate with
+\begin{align}
+\hat{p}(k_i | x_{i, 1:T_{n-1}}) &= \int_{\theta} p(k_i | \theta, x_{i, 1:T_{n-1}})q_{\lambda_{n-1}}(\theta | x_{i, 1:T_{n-1}}) d\theta \\
+&\approx \frac{1}{M} \sum_{m=1}^M p(k_i | \theta^{(m)}, x_{i, 1:T_{n-1}})
+\end{align}
+where $\theta^{(m)} \sim q_{\lambda_{n-1}}(\theta | x_{i, 1:T_{n-1}})$ for $m = 1, 2, \dots, M$.
+\\
+
+This distribution is also used to predict classes for each unit as
+\begin{equation}
+\hat{k_i} = \arg \underset{j}{\max} p(k_i = j | x_{i, 1:T_n}).
+\end{equation}
+
+The accuracy of each inferential method in this model is given by the proportion of correct class predictions at each $T_n$.
 
 \bibliographystyle{asa}
 \bibliography{references}

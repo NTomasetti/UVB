@@ -436,12 +436,14 @@ forecast %>%
   filter(inference != 'MCMC' & t %% 25 == 0) %>%
   select(-ls, -ESS, -ELBO) %>%
   spread(inference, runTime) %>%
-  mutate(IS = (`VB-IS` - `UVB-IS`) / `VB-IS` * 100,
-         NoIS = (VB - UVB) / VB * 100,
+  mutate(`UVB-IS` = -(`UVB-IS` - VB) / VB * 100,
+         UVB = -(UVB - VB) / VB * 100,
+         `VB-IS` = -(`VB-IS` - VB) / VB * 100,
          t = t - 100) %>%
-  gather(inference, diff, IS, NoIS) %>%
-  mutate(inference = factor(inference, levels = c('IS', 'NoIS'))) %>%
+  gather(inference, diff, `UVB-IS`, `VB-IS`, UVB) %>%
+  mutate(inference = factor(inference, levels = c('VB-IS', 'UVB', 'UVB-IS'))) %>%
   group_by(inference, t, K) %>%
+  filter(!is.na(diff)) %>%
   summarise(mean = mean(diff),
             med = median(diff),
             l50 = quantile(diff, 0.25),
@@ -452,7 +454,20 @@ forecast %>%
   geom_line(aes(t, med), colour = 'red', size = 1) +
   facet_grid(K ~ inference) + 
   theme_bw() + 
-  labs(x = 't', y = 'UVB Mean % Improvement in Runtime')
+  labs(x = 't', y = '% Runtime Reduction Relative to VB')
+
+forecast %>%
+  filter(inference != 'MCMC' & !is.na(ls) & !is.na(runTime) & t %% 25 == 0) %>%
+  group_by(inference, id, K) %>%
+  mutate(lsPerSec = cumsum(ls) / runTime) %>%
+  ungroup() %>%
+  group_by(inference, K, t) %>%
+  summarise(lsPerSec = median(lsPerSec)) %>%
+  mutate(method = paste0(inference, '-', K)) %>%
+  ggplot() + geom_line(aes(t, lsPerSec, colour = method)) 
+
+
+
 
 forecast %>% 
   filter(inference %in% c('VB-IS', 'UVB-IS')) %>%

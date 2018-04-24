@@ -202,7 +202,7 @@ struct Qlogdens {
   }
 };
 
-double pLogDens(mat y, vec theta, vec K, mat mean, cube SigInv, vec weights, vec dets){
+double pLogDens(mat y, vec theta, vec probK, mat mean, cube SigInv, vec weights, vec dets){
   int N = y.n_cols;
   int T = y.n_rows;
   
@@ -216,10 +216,11 @@ double pLogDens(mat y, vec theta, vec K, mat mean, cube SigInv, vec weights, vec
   
   double logLik = 0;
   for(int i = 0; i < N; ++i){
-    double mu = theta(2 + K(i));
-    double var = exp(theta(K(i)));
     for(int t = 0; t < T; ++t){
-      logLik += -0.5 * log(var) - pow(y(t, i) - mu, 2) / (2 * var);
+      logLik += log(
+        (1 - probK(i)) * pow(2 * 3.141598 * exp(theta(0)), -0.5) * exp(-pow(y(t, i) - theta(2), 2) / 2 * exp(theta(0))) + 
+              probK(i) * pow(2 * 3.141598 * exp(theta(1)), -0.5) * exp(-pow(y(t, i) - theta(3), 2) / 2 * exp(theta(1)))
+      );
     }
   }
   return logPrior + logLik;
@@ -227,7 +228,7 @@ double pLogDens(mat y, vec theta, vec K, mat mean, cube SigInv, vec weights, vec
 
 // These models are parameterised by the mean and log standard deviations
 // [[Rcpp::export]]
-Rcpp::List mixtureNormal(mat data, Rcpp::NumericMatrix lambdaIn, vec theta, vec K, mat mean, cube SigInv, vec weights, vec dets, int mix){
+Rcpp::List mixtureNormal(mat data, Rcpp::NumericMatrix lambdaIn, vec theta, vec probK, mat mean, cube SigInv, vec weights, vec dets, int mix){
   Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
   double qEval;
   int dim = lambda.rows();
@@ -237,7 +238,7 @@ Rcpp::List mixtureNormal(mat data, Rcpp::NumericMatrix lambdaIn, vec theta, vec 
   stan::math::set_zero_all_adjoints();
   stan::math::gradient(logQ, lambda, qEval, grad);
   
-  double logp = pLogDens(data, theta, K, mean, SigInv, weights, dets);
+  double logp = pLogDens(data, theta, probK, mean, SigInv, weights, dets);
   double elbo = logp - qEval;
   for(int i = 0; i < dim; ++i){
     grad(i) *= elbo;
@@ -276,6 +277,25 @@ double probK1(vec y, vec theta, vec piPrior){
     p1 += - 0.5 * theta(1) - pow(y(t) - theta(3), 2) / (2 * exp(theta(1)));
   }
   return exp(p1) / (exp(p0) + exp(p1));
+}
+
+// [[Rcpp::export]]
+double probK2(vec y, vec theta, double kPrior){
+  double p0 = log(1 - kPrior);
+  double p1 = log(kPrior);
+  
+  for(int t = 0; t < y.n_rows; ++t){
+    p0 += - 0.5 * theta(0) - pow(y(t) - theta(2), 2) / (2 * exp(theta(0)));
+    p1 += - 0.5 * theta(1) - pow(y(t) - theta(3), 2) / (2 * exp(theta(1)));
+  }
+  p1 = p1 - p0;
+  if(p1  > 10){
+    return exp(10) / (1 + exp(10));
+  } else if(p1 < -10){
+    return 1 / (1 + exp(10));
+  } else {
+    return exp(p1) / (1 + exp(p1));
+  }
 }
 
 // [[Rcpp::export]]

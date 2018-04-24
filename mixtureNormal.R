@@ -12,9 +12,9 @@ sourceCpp('mixtureNormal.cpp')
 
 set.seed(rep)
 
-N <- 50
-T <- 300
-initialBatch <- 100
+N <- 10
+T <- 100
+initialBatch <- 50
 updateSize <- 25
 batches <- (T - initialBatch) / updateSize + 1
 data <- seq(initialBatch, T, length.out = batches)
@@ -95,14 +95,14 @@ for(mix in 1:3){
                            mixApprox = mix,
                            mean = matrix(priorMean, ncol = 1),
                            SigInv = array(priorVarInv, dim = c(4, 4, 1)),
-                           piPrior = priorPi,
+                           kPrior = rep(0.5, N),
                            weights = 1,
                            dets = det(priorVarInv) ^ 0.5)
         VBfit[,t] <- VB$lambda
         ELBO <- VB$LB[VB$iter - 1]
       } else {
         # UVB fits
-
+        
         updateMean <- matrix(VBfit[1:(4*mix), t-1], ncol = mix)
         updateVarInv <- array(0, dim = c(4, 4, mix))
         dets <- rep(0, mix)
@@ -113,21 +113,22 @@ for(mix in 1:3){
         }
         updateZ <- VBfit[4*mix*2 + 1:mix, t-1] 
         updateWeight <- exp(updateZ) / sum(exp(updateZ))
-       
+        
         VB <- fitVBScoreMN(data = y[(data[t-1]+1):data[t],],
-                          S = 50,
-                          lambda = VBfit[,t-1],
-                          mixPrior = mix,
-                          mixApprox = mix,
-                          mean = updateMean,
-                          SigInv = updateVarInv,
-                          piPrior = priorPi,
-                          weights = updateWeight,
-                          dets = dets)
-            
-            VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[VB$iter - 1]
-            
+                           S = 50,
+                           lambda = VBfit[,t-1],
+                           mixPrior = mix,
+                           mixApprox = mix,
+                           mean = updateMean,
+                           SigInv = updateVarInv,
+                           piPrior = priorPi,
+                           kPrior = probKgroup1,
+                           weights = updateWeight,
+                           dets = dets)
+        
+        VBfit[,t] <- VB$lambda
+        ELBO <- VB$LB[VB$iter - 1]
+        
       }
       
       endVB <- Sys.time() - startVB
@@ -146,10 +147,10 @@ for(mix in 1:3){
         component[i] <- sample(1:mix, 1, prob = fitWeight)
         drawVB[i, ] <- fitMean[,component[i]] + fitSd[,component[i]] * rnorm(4)
         for(j in 1:N){
-          probK[i, j] <- probK1(y[1:data[t],j], drawVB, priorPi)
+          probK[i, j] <- probK2(y[1:data[t],j], drawVB[i,], 0.5)
         }
       }
-     
+      
       ISTimeStart <- Sys.time()
       pTheta <- rep(0, MCsamples)
       qTheta <- rep(0, MCsamples)
