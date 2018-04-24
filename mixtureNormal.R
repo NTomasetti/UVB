@@ -1,58 +1,63 @@
-library(Rcpp)#, lib.loc = 'packages')
-library(RcppArmadillo)#, lib.loc = 'packages')
-library(RcppEigen)#, lib.loc = 'packages')
-library(rstan)#, lib.loc = 'packages')
+rm(list = ls())
+repenv <- Sys.getenv("SLURM_ARRAY_TASK_ID")
+rep <- as.numeric(repenv)
+
+
+library(Rcpp, lib.loc = 'packages')
+library(RcppArmadillo, lib.loc = 'packages')
+library(RcppEigen, lib.loc = 'packages')
+library(rstan, lib.loc = 'packages')
 source('RFuns.R')
 sourceCpp('mixtureNormal.cpp')
 
-rep <- 1
 set.seed(rep)
 
-N <- 100
-T <- 200
-initialBatch <- 50
+N <- 50
+T <- 300
+initialBatch <- 100
 updateSize <- 25
 batches <- (T - initialBatch) / updateSize + 1
 data <- seq(initialBatch, T, length.out = batches)
-MCsamples <- 500
+MCsamples <- 5000
 
 mu <- rnorm(2, 0, 0.25)
 sigmaSq <- runif(2, 1, 2)
-group <- sample(1:2, N, replace = TRUE)
+group <- sample(0:1, N, replace = TRUE)
 y <- matrix(0, T, N)
-stats <- data.frame()
 results <- data.frame()
 
 for(i in 1:N){
-  y[,i] <- rnorm(T, mu[group[i]], sqrt(sigmaSq[group[i]]))
+  y[,i] <- rnorm(T, mu[group[i]+1], sqrt(sigmaSq[group[i]+1]))
 }
 
 priorMean <- rep(0, 4)
 priorVar <- diag(10, 4)
 priorLinv <- solve(t(chol(priorVar)))
-priorPi <- matrix(1, N, 2)
+priorVarInv <- solve(priorVar)
+priorPi <- rep(1, 2)
 
-draw <- c(0, 0, 0, 0, rep(1, 2*N))
 
 # MCMC
-for(t in seq_along(batches)){
+for(t in 1:batches){
   # Fit MCMC
-  MCMCfit <- MixNormMCMC(data = y[1:data[t], ],
+  MCMCfit <- MixNormMCMC(y = y[1:data[t], ],
                          reps = 15000,
-                         draw = draw,
-                         hyper = list(mean = priorMean, varInv = priorVarInv))$draws[floor(seq(10001, 15000, length.out = MCsamples)), ]
+                         drawT = c(0.5, 0.5, 0, 0),
+                         drawK = sample(0:1, N, replace = TRUE),
+                         hyper = list(mean = priorMean, varInv = priorVarInv),
+                         thin = 10,
+                         stepsize = 0.01)
+  keep <- floor(seq(1001, 1500, length.out = MCsamples))
   
   # Set up forecast density
   class <- rep(0, N)
   # Forecast
   for(j in 1:N){
     class1 <- 0
-    class2 <- 0
     for(i in 1:MCsamples){
-      class1 <- class1 + MCMCfit[i, 3 + 2*j] / MCsamples
-      class2 <- class2 + MCMCfit[i, 4 + 2*j] / MCsamples
+      class1 <- class1 + MCMCfit$K[keep[i], j] / MCsamples
     }
-    class[j] <- which.max(c(class1, class2))
+    class[j] <- class1 > 0.5
   }
   score <- max(sum(class == group), sum(class != group)) / N
   
@@ -66,167 +71,116 @@ for(t in seq_along(batches)){
                               id = rep))
 }
 
-for(K in 1:3){
+for(mix in 1:3){
   for(Update in 0:1){
     # Start Time
-    startTimeVB <- Sys.time()
-      
-    # Initial Lambda
-    if(K == 1){
-      lambda <- c(rnorm(2), rnorm(2, -0.5, 0.2), diag(1, 4), rnorm(2*N, 0, 0.25))
-    } else {
-      lambda <- c(rnorm(2*K), rnorm(2*K, -1, 0.5), rnorm(K), rnorm(2*N, 0, 0.25))
-    }
-      
-    VBfit <- matrix(0, length(lambda), batches)
-      
-    for(t in 1:batches){
-      if(!Update){
-      # VB Fits
-      #If K = 1, use the reparam gradients
-        if(K == 1){
-          VB <- fitVB(data = x[(data[1]+1 - lags):data[t+1]],
-                      lambda = lambda,
-                      model = mixtureNormalSPSA,
-                      S = 25,
-                      dimTheta = 4+N,
-                      mean = priorMean,
-                      varInv = priorLinv,
-                      piPrior = priorPi)
-            
-          VBfit[,t] <- VB$lambda
-          ELBO <- VB$LB[VB$iter - 1]
-          
-        } else {
-        # Otherwise use score gradients
-          VB <- fitVBScoreMN(data = x[(data[1]+1 - lags):data[t+1]],
-                             lambda = lambda,
-                             model = mixtureNormalSPMA,
-                             K = K,
-                             S = 25,
-                             mean = priorMean,
-                             varInv = priorLinv,
-                             piPrior = priorPi)
-            
-          VBfit[,t] <- VB$lambda
-          ELBO <- VB$LB[VB$iter - 1]
-            
-        }
-      } else {
-        # UVB fits, At time 1, VB = UVB
-        if(t == 1){
-          if(K == 1){
-            VB <- fitVB(data = x[(data[1]+1 - lags):data[t+1]],
-                        lambda = lambda,
-                        model = mixtureNormalSPSA,
-                        S = 25,
-                        dimTheta = 4+N,
-                        mean = priorMean,
-                        varInv = priorLinv,
-                        piPrior = priorPi)
-            
-            VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[VB$iter - 1]
-            
-          } else {
-            # Otherwise use score gradients
-            VB <- fitVBScoreMN(data = x[(data[1]+1 - lags):data[t+1]],
-                               lambda = lambda,
-                               model = mixtureNormalSPMA,
-                               K = K,
-                               S = 25,
-                               mean = priorMean,
-                               varInv = priorLinv,
-                               piPrior = priorPi)
-            
-            VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[VB$iter - 1]
-            
-          }
-        } else {
-          # Otherwise apply UVB
-          if(K == 1){
-            # Reparam gradients
-            updateMean <- VBfit[1:4, t-1]
-            updateU <- matrix(VBfit[5:20, t-1], ncol = 4)
-            updateLinv <- t(solve(updateU))
-            
-            updatePi <- matrix(0, N, 2)
-            updatePi[, 1] <- VBfit[20 + seq(1, 2*N-1, 2), t-1]
-            updatePi[, 2] <- VBfit[20 + seq(2, 2*N, 2), t-1]^2
-            
-            VB <- fitVB(data = x[(data[1]+1 - lags):data[t+1]],
-                        lambda = VBfit[,t-1],
-                        model = mixtureNormalSPSA,
-                        S = 25,
-                        dimTheta = 4+N,
-                        mean = updateMean,
-                        varInv = updateLinv,
-                        piPrior = updatePi)
-            
-            VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[VB$iter - 1]
-              
-          } else {
-            # Score gradients
-            updateMean <- matrix(VBfit[1:(4*K), t-1], ncol = K)
-            updateVarInv <- array(0, dim = c(dim, dim, K))
-            dets <- rep(0, K)
-            for(k in 1:K){
-              sd <- exp(VBfit[4*K + 4*(k-1) + 1:4, t-1])
-              updateVarInv[,,k] <- diag(1/sd^2)
-              dets[k] <- 1 / prod(sd)
-            }
-            updateZ <- VBfit[4*K*2 + 1:K, t-1] 
-            updateWeight <- exp(updateZ) / sum(exp(updateZ))
-            
-            updatePi <- VBfit[9*K + 1:(2*N), ncol = 2]
-            
-            VB<- fitVBScoreMN(data = x[(data[t]+1-lags):data[t+1]],
-                              lambda = VBfit[,t-1],
-                              model = mixtureNormalMPMA,
-                              K = K,
-                              S = 25,
-                              mean = updateMean,
-                              SigInv = updateVarInv,
-                              dets = dets,
-                              weights = updateWeight,
-                              piPrior = updatePi)
-            
-            VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[VB$iter - 1]
-              
-          }
-            
-        }
-      }
-        
+    VBTotal <- 0
+    ISTotal <- 0
     
-      runTime <- Sys.time() - startTimeVB
-      class(runTime) <- 'numeric'
-      if(attr(runTime, 'units') == 'mins'){
-        attr(runTime, 'units') = 'secs'
-        runTime <- runTime * 60
-      } else if(attr(runTime, 'units') == 'hours'){
-        attr(runTime, 'units') = 'hours'
-        runTime <- runTime * 3600
+    
+    # Initial Lambda
+    lambda <- c(rnorm(4*mix, 0, 0.1), rnorm(4*mix, -1, 0.5), rnorm(mix))
+    
+    VBfit <- matrix(0, length(lambda), batches)
+    
+    for(t in 1:batches){
+      startVB <- Sys.time()
+      
+      if(!Update | t == 1){
+        # VB Fit = UVB fit when t = 1
+        VB <- fitVBScoreMN(data = y[1:data[t],],
+                           S = 50,
+                           lambda = lambda,
+                           mixPrior = 1,
+                           mixApprox = mix,
+                           mean = matrix(priorMean, ncol = 1),
+                           SigInv = array(priorVarInv, dim = c(4, 4, 1)),
+                           piPrior = priorPi,
+                           weights = 1,
+                           dets = det(priorVarInv) ^ 0.5)
+        VBfit[,t] <- VB$lambda
+        ELBO <- VB$LB[VB$iter - 1]
+      } else {
+        # UVB fits
+
+        updateMean <- matrix(VBfit[1:(4*mix), t-1], ncol = mix)
+        updateVarInv <- array(0, dim = c(4, 4, mix))
+        dets <- rep(0, mix)
+        for(k in 1:mix){
+          sd <- exp(VBfit[4*mix + 4*(k-1) + 1:4, t-1])
+          updateVarInv[,,k] <- diag(1/sd^2)
+          dets[k] <- 1 / prod(sd)
+        }
+        updateZ <- VBfit[4*mix*2 + 1:mix, t-1] 
+        updateWeight <- exp(updateZ) / sum(exp(updateZ))
+       
+        VB <- fitVBScoreMN(data = y[(data[t-1]+1):data[t],],
+                          S = 50,
+                          lambda = VBfit[,t-1],
+                          mixPrior = mix,
+                          mixApprox = mix,
+                          mean = updateMean,
+                          SigInv = updateVarInv,
+                          piPrior = priorPi,
+                          weights = updateWeight,
+                          dets = dets)
+            
+            VBfit[,t] <- VB$lambda
+            ELBO <- VB$LB[VB$iter - 1]
+            
       }
       
-      class <- rep(0, N)
-      for(j in 1:N){
-        class[j] <- which.max(VBfit[,t], VBfit[,t])
+      endVB <- Sys.time() - startVB
+      VBTotal <- VBTotal + as.numeric(endVB)
+      
+      drawVB <- matrix(0, MCsamples, 4)
+      probK <- matrix(0, MCsamples, N)
+      component <- rep(0, MCsamples)
+      
+      fitMean <- matrix(VBfit[1:(4*mix), t], ncol = mix)
+      fitSd <- matrix(exp(VBfit[4*mix + 1:(4*mix), t]), ncol = mix)
+      fitZ <- VBfit[8*mix + 1:mix, t]
+      fitWeight <- exp(fitZ) / sum(exp(fitZ))
+      
+      for(i in 1:MCsamples){
+        component[i] <- sample(1:mix, 1, prob = fitWeight)
+        drawVB[i, ] <- fitMean[,component[i]] + fitSd[,component[i]] * rnorm(4)
+        for(j in 1:N){
+          probK[i, j] <- probK1(y[1:data[t],j], drawVB, priorPi)
+        }
       }
-      score <- max(sum(class == group), sum(class != group)) / N
+     
+      ISTimeStart <- Sys.time()
+      pTheta <- rep(0, MCsamples)
+      qTheta <- rep(0, MCsamples)
+      for(i in 1:MCsamples){
+        pTheta[i] <- MNLogDens2(y[1:data[t], ], drawVB[i, ], probK[i, ], priorMean, priorVarInv)
+        qTheta[i] <- mvtnorm::dmvnorm(drawVB[i,], fitMean[,component[i]], diag(fitSd[,component[i]]^2)) 
+      }
+      pTheta <- pTheta - max(pTheta)
+      weights <- exp(pTheta) / qTheta
+      weights <- weights / sum(weights)
+      ISTimeFinish <- Sys.time() - ISTimeStart
+      ISTotal <- ISTotal + as.numeric(ISTimeFinish)
+      
+      
+      probKgroup1 <- colMeans(probK)
+      probKgroup2 <- colSums(probK * weights)
+      
+      class1 <- probKgroup1 > 0.5
+      class2 <- probKgroup2 > 0.5
+      score1 <- max(sum(class1 == group), sum(class1 != group)) / N
+      score2 <- max(sum(class2 == group), sum(class2 != group)) / N
       
       results <- rbind(results,
                        data.frame(t = data[t],
-                                  score = score,
-                                  inference = paste0(ifelse(Update, 'U', ''), 'VB'),
-                                  K = K,
-                                  runTime = runTIme,
+                                  score = c(score1, score2),
+                                  inference = paste0(ifelse(Update, 'U', ''), c('VB', 'VB-IS')),
+                                  K = mix,
+                                  runTime = c(VBTotal, VBTotal + ISTotal), 
                                   ELBO = ELBO,
                                   id = rep))
     }
   }
 }
-
+write.csv(results, paste0('mixNorm/N50_', rep, '.csv'), row.names = FALSE)

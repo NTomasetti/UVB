@@ -300,6 +300,8 @@ The computational complexity of UVB as $n$ increases is $O(T_{n} - T_{n-1})$, wh
 
 \section{Importance Sampling} \label{sec:IS}
 
+Note: This is similar to the ideas presented in SMCVB (Citation). They use meanfield VB and refit the approximation from scratch each iteration. They also use a metropolis hastings step to draw new theta particles when the weights decay too much.
+
 At each time point $T_n$ we have an approximation to the posterior, $q_{\lambda_n}(\theta | x_{1:T_n})$. The true posterior is known up to proportionality, $p(\theta | x_{1:T_n}) \propto p(x_{1:T_n} | \theta)p(\theta)$. 
 \\
 
@@ -403,12 +405,9 @@ L(n, h) = \log(p(x_{T_n + h} | x_{1:T_n}))
 Many models aim to associate a class label $k_i = 1 , \dots, K$ to observations of each unit $i$. Consider the problem where $T_n$ observations are recorded for each of $M$ units from a mixture of normal distributions,
 \begin{equation}
 \label{mixNormalDGP}
-x_{i, t} \sim \sum_{k=1}^K \pi_{i, k} N(\mu_k, \sigma^2_{k}).
+x_{i, t} \sim \sum_{j=1}^K \pi_{j} N(\mu_j, \sigma^2_{j}).
 \end{equation}
-At each time period we aim to infer the posterior distribution of each mixture components parameters $\{\mu_k, \sigma_k | k = 1, \dots, K\}$ and predict the class labels of $x_{i, 1:T_n}$ via inference of the mixture weights $\pi_{i, 1}, \dots, \pi_{i, K}$. Approximation error on the mixture components is measured by the Wasserstein Distance, while class label loss function is proportion of correct classifications where the class of unit $i$ is given by
-\begin{equation}
-\mbox{Class}_{i} = \arg \underset{k}{\max} \mbox{ } E[p(\pi_{i, k} |  x_{1:M, 1:T_n})].
-\end{equation}
+At each time period we aim to infer the posterior distribution of each mixture components parameters $\{\mu_j, \sigma_j, \pi_j | k = 1, \dots, K\}$ and predict the class labels of $x_{i, 1:T_n}$. Approximation error on the mixture components is measured by the Wasserstein Distance, while class label loss function is proportion of correct classifications.
 
 \subsection{State-Space Model Loss}
 
@@ -457,7 +456,9 @@ where $I(\cdot)$ is the indicator function, which equals one if the argument is 
 
 \section{Simulation Results}
 
-We simulate $N = 100$ datasets of length $200$ from the following AR3 model,
+\subsection{Time Series Forecasting}
+
+We simulate $N = 500$ datasets of length $300$ from the following AR3 model,
 \begin{equation}
 \label{AR3}
 x_t = \mu + \phi_1 (x_{t-1} - \mu) + \phi_2 (x_{t-2} - \mu) + \phi_3 (x_{t-3} - \mu) + e_t
@@ -476,16 +477,68 @@ In each simulation, $\mu$ and each $\phi$ are drawn from an $N(0, 1)$ distributi
 At each time $t = 50, 51, \dots, 200$, the MCMC posterior distribution $p(\theta | x_{1:t})$ is simulated by 15000 draws from a Random Walk Metropolis Hastings MCMC algoritihm, discarding the first 10000 as a burn in period.
 \\
 
-VB approximations $q_{VB}(\theta | x_{1:T_n})$ are fit at times $T_1 = 50, T_2 = 75, T_3 = 100, T_4 = 125, T_5 = 150, T_6 = 175$ and $T_7 = 200$, and these are used to construct importance sampled corrections $p^*_{VB}(\theta | x_{1:t})$ for each $t = 50, 51, \dots, 200$ following Section \ref{sec:IS}. UVB approximations $p^*_{UVB}(\theta | x_{1:t})$ are constructed in the same manner, where the distribution $q_{UVB}(\theta | x_{1:T_n})$ for $n >1$ is fit by updating the previous $q_{UVB}(\theta | x_{1:T_{n-1}})$ following Section \ref{sec:UVB}. In each case, the distributional family for $q$ is chosen to be a $K = 1, 2$, or $3$ component mixture of multivariate normal distributions.
+VB approximations $q_{VB}(\theta | x_{1:T_n})$ are fit at times $T_n = 75 + 25n$ for $n = 1, 2, \dots 9$, which are then used to construct importance sampled corrections $p^*_{VB}(\theta | x_{1:t})$ for each $t = 50, 51, \dots, 200$ following Section \ref{sec:IS}. UVB approximations $p^*_{UVB}(\theta | x_{1:t})$ are constructed in the same manner, where the distribution $q_{UVB}(\theta | x_{1:T_n})$ for $n >1$ is fit by updating the previous $q_{UVB}(\theta | x_{1:T_{n-1}})$ following Section \ref{sec:UVB}. In each case, the distributional family for $q$ is chosen to be a $K = 1, 2$, or $3$ component mixture of multivariate normal distributions.
 \\
 
-For each time period, $K$, and approximate inferential method: VB and UVB with and without importance samping correction, one step forecast distributions are made by (\ref{forecastDist}) and evaluated with the forecast logscore loss function, (\ref{loss:logscore}) relative to the exact inference logscore provided by MCMC. Plots of the median difference between the approximate and exact inferences. The top right panels display UVB when $K = 1$, where the approximation error in each update compounds over time. The multivariate normal approximation when $K = 2$ or $3$ appears to have sufficient ability to approximate the true posterior, and the approximation error does not appear to increase with $t$. The use of importance sampling brings the approximate logscores much closer to the exact values, though UVB still accumulates errors when $K = 1$.
+For each time period, $K$, and approximate inferential method: VB and UVB with and without importance samping correction, one step forecast distributions are made by (\ref{forecastDist}) and evaluated with the forecast logscore loss function, (\ref{loss:logscore}) relative to the exact inference logscore provided by MCMC. Figure \ref{fig:logscore} plots the median and 50\% interval of the difference between the approximate and exact logscores. The top right panels display UVB when $K = 1$, where the approximation error in each update compounds over time. The multivariate normal approximation when $K = 2$ or $3$ appears to have sufficient ability to approximate the true posterior, and the approximation error does not appear to increase with $t$. The use of importance sampling brings the approximate logscores much closer to the exact values, though UVB still accumulates errors when $K = 1$.
 
 \begin{figure}
 \centering
 \includegraphics[width = 0.8\textwidth, height = 0.25\textheight]{AR3ls}
 \caption{VB logscore minus MCMC logscore for standard VB (left side) and Updating VB (right side) for $K = 1, 2$, and $3$ component mixtures of multivariate normal approximations. Each VB algorithm appears to perform as well as MCMC, though the approximation error of the $K = 1$ UVB cumulates as $t$ increases, increasing the forecast error relative to exact inference.}
+\label{fig:logscore}
 \end{figure}
+
+Figure \ref{fig:timing} plots the median and 50\% interval of the decrease in computation time for UVB relative to VB, with and without importance sampling at each $K$. The total time until the convergence of the $n'th$ stochastic gradient ascent algorithm it recorded for each approach. Fitting only $T_n - T_{n-1} = 25$ data points per algorithm leads to UVB outperforming VB in terms of computational time as $n$, and thus the amount of data, increases while maintaining a similar predictive accuracy.
+
+\begin{figure}
+\centering
+\includegraphics[width = 0.8\textwidth, height = 0.25\textheight]{AR3timing}
+\caption{}
+\label{fig:timing}
+\end{figure}
+
+Note: Need to re-do picture to show the cost of importance sampling. Maybe do cumulative logscore per unit of time or something similar instead of the current plot.
+
+\subsection{Mixture Model Clustering}
+
+We consider the two component mixture normal model for $i = 1, \dots N$ and $t = 1, \dots, T_n$ given by
+\begin{equation}
+\label{mixNormalDGP1}
+x_{i, t} \sim \sum_{j=1}^2 \pi_{j} N(\mu_j, \sigma^2_{j}).
+\end{equation}
+where $\pi_2 = 1 - \pi_1$. Data is collected and denoted by $x_{i, 1:T_n} = \{x_{i, t} | t = 1, \dots, T_n\}$ and $x_{1:N, 1:T_n} = \{x_{i, 1:T_n} | i = 1, \dots, N \}$.
+
+We augment the model with a set of auxiliary variables $k_i$ such that
+\begin{equation}
+\label{mixNormalDGP2}
+x_{i, t} | k_i = j \sim  N(\mu_j, \sigma^2_{j}).
+\end{equation}
+\\
+
+Collecting $\theta = \{\log(\sigma^2_1), \log(\sigma^2_2), \mu_1, \mu_2 \}$, we consider the priors
+\begin{align}
+\theta \sim N(\boldsymbol{0}, 10 I), \\
+k_i | \pi_1 \sim Bin(1, \pi_1), \label{kPrior} \\
+\pi_1 \sim Beta(\alpha, \beta). \label{piPrior}
+\end{align}
+\\
+
+Note that (\ref{kPrior}) and (\ref{piPrior}) imply that 
+\begin{equation}
+\label{kMarginal}
+p(k_i = j) = \frac{\Beta(j + \alpha, \beta - j + 1)}{\Beta(\alpha, \beta)}
+\end{equation}
+where $\Beta(\cdot, \cdot)$ denotes the Beta function.
+
+We create 500 datasets with $N = 100$ and $T = 500$, and infer the posterior distribution $p(\theta, \k_1, \dots, k_N | x_{1:N, 1:T_n})$ for $T_n = 75 + 25n$ using each inferential method: MCMC, and both VB and UVB with and without importance sampling.
+
+The use of auxiliary variables $k$ allows the so called full conditional posterior distribution $p(k_i | \theta, x_{i, 1:T_n})$ to be known exactly, and hence we employ variational approximations of the form 
+\begin{equation}
+\label{mixNormalQ}
+q_{\lambda}(\theta, k_1, \dots, k_N | x_{1:N, 1:T_n}) = q_{\lambda}(\theta | x_{1:N, 1:T_n}) \prod_{i=1}^N p(k_i | \theta, x_{i, 1:T_n})
+\end{equation}
+where $q_{\lambda}(\theta | x_{1:N, 1:T_n})$ is a $K = 1, 2,$ or $3$ component mixture of multivariate normal distributions. 
 
 \bibliographystyle{asa}
 \bibliography{references}
