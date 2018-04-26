@@ -218,8 +218,8 @@ double pLogDens(mat y, vec theta, vec probK, mat mean, cube SigInv, vec weights,
   for(int i = 0; i < N; ++i){
     for(int t = 0; t < T; ++t){
       logLik += log(
-        (1 - probK(i)) * pow(2 * 3.141598 * exp(theta(0)), -0.5) * exp(-pow(y(t, i) - theta(2), 2) / 2 * exp(theta(0))) + 
-              probK(i) * pow(2 * 3.141598 * exp(theta(1)), -0.5) * exp(-pow(y(t, i) - theta(3), 2) / 2 * exp(theta(1)))
+        (1 - probK(i)) * pow(2 * 3.141598 * exp(theta(0)), -0.5) * exp(-pow(y(t, i) - theta(2), 2) / (2 * exp(theta(0)))) + 
+              probK(i) * pow(2 * 3.141598 * exp(theta(1)), -0.5) * exp(-pow(y(t, i) - theta(3), 2) / (2 * exp(theta(1))))
       );
     }
   }
@@ -268,34 +268,31 @@ double MNLogDens(mat y, vec theta, vec K, vec mean, mat VarInv){
 }
 
 // [[Rcpp::export]]
-double probK1(vec y, vec theta, vec piPrior){
-  double p0 = log(boost::math::beta(piPrior(0), piPrior(1) + 1));
-  double p1 = log(boost::math::beta(piPrior(0) + 1, piPrior(1)));
+double probK1(vec y, vec theta, vec kPrior){
+  double p0 = kPrior(0);
+  double p1 = kPrior(1);
   
   for(int t = 0; t < y.n_rows; ++t){
     p0 += - 0.5 * theta(0) - pow(y(t) - theta(2), 2) / (2 * exp(theta(0)));
     p1 += - 0.5 * theta(1) - pow(y(t) - theta(3), 2) / (2 * exp(theta(1)));
   }
+  double minP = min(p1, p0);
+  p1 -= minP;
+  p0 -= minP;
   return exp(p1) / (exp(p0) + exp(p1));
 }
 
 // [[Rcpp::export]]
-double probK2(vec y, vec theta, double kPrior){
-  double p0 = log(1 - kPrior);
-  double p1 = log(kPrior);
+vec probK2(vec y, vec theta, vec kPrior){
+  double p0 = kPrior(0);
+  double p1 = kPrior(1);
   
   for(int t = 0; t < y.n_rows; ++t){
     p0 += - 0.5 * theta(0) - pow(y(t) - theta(2), 2) / (2 * exp(theta(0)));
     p1 += - 0.5 * theta(1) - pow(y(t) - theta(3), 2) / (2 * exp(theta(1)));
   }
-  p1 = p1 - p0;
-  if(p1  > 10){
-    return exp(10) / (1 + exp(10));
-  } else if(p1 < -10){
-    return 1 / (1 + exp(10));
-  } else {
-    return exp(p1) / (1 + exp(p1));
-  }
+  vec out {p0, p1};
+  return out;
 }
 
 // [[Rcpp::export]]
@@ -309,8 +306,8 @@ double MNLogDens2(mat y, vec theta, vec probK, vec mean, mat VarInv){
   for(int i = 0; i < N; ++i){
     for(int t = 0; t < T; ++t){
       logLik += log(
-        (1 - probK(i)) * pow(2 * 3.141598 * exp(theta(0)), -0.5) * exp(-pow(y(t, i) - theta(2), 2) / 2 * exp(theta(0))) + 
-        probK(i) * pow(2 * 3.141598 * exp(theta(1)), -0.5) * exp(-pow(y(t, i) - theta(3), 2) / 2 * exp(theta(1)))
+        (1 - probK(i)) * pow(2 * 3.141598 * exp(theta(0)), -0.5) * exp(-pow(y(t, i) - theta(2), 2) / (2 * exp(theta(0)))) + 
+        probK(i) * pow(2 * 3.141598 * exp(theta(1)), -0.5) * exp(-pow(y(t, i) - theta(3), 2) / (2 * exp(theta(1))))
       );
     }
   }

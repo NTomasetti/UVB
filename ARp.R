@@ -383,6 +383,8 @@ forecast <- rbind(readr::read_csv('results/AR3_1_125.csv'),
                   readr::read_csv('results/AR3_376_500.csv'))
 write.csv(forecast, 'results/AR3_full.csv', row.names = FALSE)
 library(tidyverse)
+forecast <- readr::read_csv('results/AR3_full.csv')
+
 
 forecast %>% 
   select(-runTime, -ESS, -ELBO) %>%

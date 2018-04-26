@@ -300,7 +300,7 @@ The computational complexity of UVB as $n$ increases is $O(T_{n} - T_{n-1})$, wh
 
 \section{Importance Sampling} \label{sec:IS}
 
-Note: This is similar to the ideas presented in SMCVB (Citation). They use meanfield VB and refit the approximation from scratch each iteration. They also use a metropolis hastings step to draw new theta particles when the weights decay too much.
+Note: This is similar to the ideas presented in McGrory, Pettitt, Titterington, ALston and Kelly 2016. They use meanfield VB and refit the approximation from scratch each iteration. They also use a metropolis hastings step to draw new theta particles when the importance sampling weights decay too much.
 
 At each time point $T_n$ we have an approximation to the posterior, $q_{\lambda_n}(\theta | x_{1:T_n})$. The true posterior is known up to proportionality, $p(\theta | x_{1:T_n}) \propto p(x_{1:T_n} | \theta)p(\theta)$. 
 \\
@@ -477,10 +477,26 @@ In each simulation, $\mu$ and each $\phi$ are drawn from an $N(0, 1)$ distributi
 At each time $t = 50, 51, \dots, 200$, the MCMC posterior distribution $p(\theta | x_{1:t})$ is simulated by 15000 draws from a Random Walk Metropolis Hastings MCMC algoritihm, discarding the first 10000 as a burn in period.
 \\
 
-VB approximations $q_{VB}(\theta | x_{1:T_n})$ are fit at times $T_n = 75 + 25n$ for $n = 1, 2, \dots 9$, which are then used to construct importance sampled corrections $p^*_{VB}(\theta | x_{1:t})$ for each $t = 50, 51, \dots, 200$ following Section \ref{sec:IS}. UVB approximations $p^*_{UVB}(\theta | x_{1:t})$ are constructed in the same manner, where the distribution $q_{UVB}(\theta | x_{1:T_n})$ for $n >1$ is fit by updating the previous $q_{UVB}(\theta | x_{1:T_{n-1}})$ following Section \ref{sec:UVB}. In each case, the distributional family for $q$ is chosen to be a $K = 1, 2$, or $3$ component mixture of multivariate normal distributions.
+VB and UVB approximations, $q_{VB}(\theta | x_{1:T_n})$ and $q_{UVB}(\theta | x_{1:T_n})$ respectively, are fit at each time $T_n = 75 + 25n$ for $n = 1, 2, \dots 9$. These are used as importance sample proposal distributions to construct further approximating distributions $p^*_{VB}(\theta | x_{1:t})$ and $p^*_{UVB}(\theta | x_{1:t})$ for each $t = 50, 51, \dots, 200$ following Section \ref{sec:IS}. In each case, the distributional family for $q$ is chosen to be a $K = 1, 2$, or $3$ component mixture of multivariate normal distributions.
 \\
 
-For each time period, $K$, and approximate inferential method: VB and UVB with and without importance samping correction, one step forecast distributions are made by (\ref{forecastDist}) and evaluated with the forecast logscore loss function, (\ref{loss:logscore}) relative to the exact inference logscore provided by MCMC. Figure \ref{fig:logscore} plots the median and 50\% interval of the difference between the approximate and exact logscores. The top right panels display UVB when $K = 1$, where the approximation error in each update compounds over time. The multivariate normal approximation when $K = 2$ or $3$ appears to have sufficient ability to approximate the true posterior, and the approximation error does not appear to increase with $t$. The use of importance sampling brings the approximate logscores much closer to the exact values, though UVB still accumulates errors when $K = 1$.
+Given the posterior, or its approximation, the forecast distribution for $x_{T_n+h}$ is given by
+\begin{equation}
+\label{forecastDist}
+p(x_{T_n + h} | x_{1:T_n}) = \int_{\theta} p(x_{T_n + h} | x_{1:T_n}, \theta)p(\theta | x_{1:T_n})d\theta,
+\end{equation}
+which may be evaluated by $M$ samples from the posterior,
+\begin{equation}
+\label{forecastDist}
+\hat{p}(x_{T_n + h} | x_{1:T_n}) \approx \frac{1}{M} \sum_{m=1}^M  p(x_{T_n + h} | x_{1:T_n}, \theta^{(m)}.
+\end{equation}
+The loss function associated with this value is given by $L(n, h)$ and is measured by the predictive logscore,
+\begin{equation}
+\label{loss:logscore}
+L(n, h) = \log(p(x_{T_n + h} | x_{1:T_n})).
+\end{equation}
+
+One step ahead forecast distributions are made for each inferential method: MCMC and both VB and UVB with and without importance sampling, and approximations are evaluated with the logscore relative to the exact inference logscore provided by MCMC. Figure \ref{fig:logscore} plots the median and 50\% interval of the difference between the approximate and exact logscores. The top right panels display UVB when $K = 1$, where the approximation error in each update compounds over time. The approximation error does not increase over $t$ with more flexible mixtures, when $K = 2$ or $3$ the approximate distribution appears to have sufficient ability to approximate the true posterior. Importance sampling further reduces approximation error, especially when $K = 2$ or $3$.
 
 \begin{figure}
 \centering
@@ -489,7 +505,7 @@ For each time period, $K$, and approximate inferential method: VB and UVB with a
 \label{fig:logscore}
 \end{figure}
 
-Figure \ref{fig:timing} plots the median and 50\% interval of the decrease in computation time for UVB relative to VB, with and without importance sampling at each $K$. The total time until the convergence of the $n'th$ stochastic gradient ascent algorithm it recorded for each approach. Fitting only $T_n - T_{n-1} = 25$ data points per algorithm leads to UVB outperforming VB in terms of computational time as $n$, and thus the amount of data, increases while maintaining a similar predictive accuracy.
+Figure \ref{fig:timing} plots the median and 50\% interval of the decrease in computation time for each approximate inferential technique relative to VB. The total time until the convergence of the $n'th$ stochastic gradient ascent algorithm it recorded for each approach. Fitting only $T_n - T_{n-1} = 25$ data points per algorithm leads to UVB outperforming VB in terms of computational time as $n$, and thus the amount of data, increases while maintaining a similar predictive accuracy. Importance sampling occurs little computational cost relative to fitting the variational approximation.
 
 \begin{figure}
 \centering
@@ -531,35 +547,31 @@ where $\mathcal{B}(\cdot, \cdot)$ denotes the Beta function.
 We create 500 datasets with $N = 50$ and $T = 300$, and infer the posterior distribution $p(\theta, k_1, \dots, k_N | x_{1:N, 1:T_n})$ for $T_n = 75 + 25n$ for $n = 1, 2, \dots, 9$ using each inferential method: MCMC, and both VB and UVB with and without importance sampling.
 \\
 
-The use of auxiliary variables $k$ allows each of the so called full conditional distributions $p(k_i | \theta, x_{i, 1:T_n})$ to be known exactly,
+The use of auxiliary variables $k$ allows each of the so called full conditional distributions $p(k_i | \theta, x_{i, 1:T_n})$ allows the posterior distribution to be marginalised over the values of each $k_i$,
 \begin{equation}
-\label{mixNormalKFC}
-p(k_i = j| \theta, x_{i, 1:T_n}) = \frac{p(x_{i, 1:T_n} | \theta, k_i = j)p(k_i = j)}{\sum_{j=1}^2 p(x_{i, 1:T_n} | \theta, k_i = j)p(k_i = j)}
+\label{mixNormalMarginal}
+p(\theta | x_{1:N, 1:T_n}) \propto p(\theta) \prod_{i=1}^N \left( \sum_{j=1}^2 p(x_{i, 1:T_n} | \theta, k_i = j) p(k_i = j) \right)
 \end{equation}
-and hence we employ variational approximations of the form 
-\begin{equation}
-\label{mixNormalQ}
-q_{\lambda_n}(\theta, k_1, \dots, k_N | x_{1:N, 1:T_n}) = q_{\lambda_n}(\theta | x_{1:N, 1:T_n}) \prod_{i=1}^N p(k_i | \theta, x_{i, 1:T_n})
-\end{equation}
-where $q_{\lambda}(\theta | x_{1:N, 1:T_n})$ is a $K = 1, 2,$ or $3$ component mixture of multivariate normal distributions. 
+We approximate this by employing variational approximations $q_{\lambda}(\theta | x_{1:N, 1:T_n})$ as either a $K = 1, 2,$ or $3$ component mixture of multivariate normal distributions. 
 \\
 
-UVB can repeatedly be applied at each time $T_n$ if the distribution at $T_{n-1}$ can be written in the same form as the prior to apply the VB update
+This posterior approximation can be updated if at each time $T_{n+1}$ the marginalisation in (\ref{mixNormalMarginal}) can be applied as
 \begin{equation}
 \label{mixNormalUpdate}
-\hat{p}(\theta, k_1, \dots, k_N | x_{1:T_n}) \propto \prod_{i=1}^N p(x_{i, T_{n-1}+1:T_n} | \theta, k_i)p(k_i | x_{i, 1:T_{n-1}}) q_{\lambda_{n-1}}(\theta | x_{i, 1:T_{n-1}}).
+\hat{p}(\theta | x_{1:T_{n+1}}) \propto q_{\lambda_{n}}(\theta | x_{i, 1:T_{n}}) \prod_{i=1}^N \left( \sum_{j=1}^2 p(x_{i, T_n+1:T_{n+1}} | \theta, k_i = j) p(k_i = j | x_{1:T_n}) \right)
 \end{equation}
-This requires the marginal posterior distributions $p(k_i | x_{i, 1:T_{n-1}})$, which we approximate with
+This requires the marginal posterior distributions $p(k_i | x_{i, 1:T_{n}})$, which we approximate with
 \begin{align}
-\hat{p}(k_i | x_{i, 1:T_{n-1}}) &= \int_{\theta} p(k_i | \theta, x_{i, 1:T_{n-1}})q_{\lambda_{n-1}}(\theta | x_{i, 1:T_{n-1}}) d\theta \\
-&\approx \frac{1}{M} \sum_{m=1}^M p(k_i | \theta^{(m)}, x_{i, 1:T_{n-1}})
+\hat{p}(k_i | x_{i, 1:T_{n}}) &= \int_{\theta} p(k_i | \theta, x_{i, 1:T_{n}})q_{\lambda_{n}}(\theta | x_{i, 1:T_{n}}) d\theta \nonumber \\
+&\propto \int_{\theta} p(x_{i, 1:T_n} | \theta, k_i) p(k_i) q_{\lambda_{n}}(\theta | x_{i, 1:T_{n}}) d\theta \nonumber \\
+&\approx \frac{1}{M} \sum_{m=1}^M p(x_{i, 1:T_n} | \theta, k_i) p(k_i). \label{pkHat}
 \end{align}
-where $\theta^{(m)} \sim q_{\lambda_{n-1}}(\theta | x_{i, 1:T_{n-1}})$ for $m = 1, 2, \dots, M$.
+where $\theta^{(m)} \sim q_{\lambda_{n-1}}(\theta | x_{i, 1:T_{n-1}})$ for $m = 1, 2, \dots, M$. This step happens once per VB update, so use of the entire dataset in (\ref{pkHat}) does not incur a large computational cost.
 \\
 
 This distribution is also used to predict classes for each unit as
 \begin{equation}
-\hat{k_i} = \arg \underset{j}{\max} p(k_i = j | x_{i, 1:T_n}).
+\hat{k}_i = \arg \underset{j}{\max}\mbox{ } p(k_i = j | x_{i, 1:T_n}).
 \end{equation}
 
 The accuracy of each inferential method in this model is given by the proportion of correct class predictions at each $T_n$.
