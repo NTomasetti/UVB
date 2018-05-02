@@ -1,27 +1,25 @@
 rm(list = ls())
-#repenv <- Sys.getenv("SLURM_ARRAY_TASK_ID")
-#rep <- as.numeric(repenv)
+repenv <- Sys.getenv("SLURM_ARRAY_TASK_ID")
+rep <- as.numeric(repenv)
 
-library(Rcpp)#, lib.loc = 'packages')
-library(RcppArmadillo)#, lib.loc = 'packages')
-library(RcppEigen)#, lib.loc = 'packages')
-library(rstan)#, lib.loc = 'packages')
+library(Rcpp, lib.loc = 'packages')
+library(RcppArmadillo, lib.loc = 'packages')
+library(RcppEigen, lib.loc = 'packages')
+library(rstan, lib.loc = 'packages')
 source('RFuns.R')
 sourceCpp('ARP.cpp')
 
-forecast <- NULL
+forecast <- list()
+counter <- 1
 
-min <- 251
-max <- 375
-
-T <- 200
-initialBatch <- 50
+T <- 300
+initialBatch <- 100
 updateSize <- 25
 batches <- (T - initialBatch) / updateSize + 1
 data <- c(100, seq(100 + initialBatch, T+100, length.out = batches))
 
 lags <- 3
-MCsamples <- 500
+MCsamples <- 2000
 
 dim <- 2 + lags
 priorMean <- rep(0, dim)
@@ -29,34 +27,6 @@ priorVar <- diag(10, dim)
 priorVarInv <- solve(priorVar)
 priorLinv <- solve(t(chol(priorVar)))
 
-
-for(rep in min:max){
-
-if(rep == min){
-  startTime <- Sys.time()
-} else if(rep == min + 1){
-  timePerIter <- Sys.time() - startTime
-  class(timePerIter) <- 'numeric'
-  if(attr(timePerIter, 'units') == 'mins'){
-    attr(timePerIter, 'units') = 'secs'
-    timePerIter <- timePerIter * 60
-  } else if(attr(timePerIter, 'units') == 'hours'){
-    attr(timePerIter, 'units') = 'hours'
-    timePerIter <- timePerIter * 3600
-  }
-  print(paste0('Time Per Iter: ', round(timePerIter / 60, 2), ' minutes. Estimated Finishing Time: ', Sys.time() + (max - min) * timePerIter))
-} else {
-  timePerIter <- (Sys.time() - startTime) / (rep - min)
-  class(timePerIter) <- 'numeric'
-  if(attr(timePerIter, 'units') == 'mins'){
-    attr(timePerIter, 'units') = 'secs'
-    timePerIter <- timePerIter * 60
-  } else if(attr(timePerIter, 'units') == 'hours'){
-    attr(timePerIter, 'units') = 'secs'
-    timePerIter <- timePerIter * 3600
-  }
-  print(paste0('Iteration: ', rep, ' Estimated Finishing Time: ', Sys.time() + (max + 1 - rep) * timePerIter))
-}
 set.seed(rep)
 
 
@@ -84,11 +54,11 @@ for(t in (lags+1):(T+100+1)){
 support <- seq(min(x)-sd(x), max(x)+sd(x), length.out = 1000)
 
 # MCMC for exact forecast densities
-for(t in data[2]:data[batches+1]){
+for(t in 1:batches){
   
   # Fit MCMC
-  MCMCfit <- ARpMCMCallMH(data = x[(data[1]+1 - lags):t],
-                          reps = 15000,
+  MCMCfit <- ARpMCMCallMH(data = x[(data[1]+1 - lags):data[t+1]],
+                          reps = 25000,
                           draw = rep(0, dim),
                           hyper = list(mean = priorMean, varInv = priorVarInv),
                           lags = lags)$draws[floor(seq(10001, 15000, length.out = MCsamples)), ]
@@ -100,29 +70,29 @@ for(t in data[2]:data[batches+1]){
       sigSq <- exp(MCMCfit[i, 1])
       mu <- MCMCfit[i, 2]
       phi <- MCMCfit[i, 3:(2 + lags)]
-      mean <- mu + phi %*% (x[t+1-(1:lags)] - mu)
+      mean <- mu + phi %*% (x[data[t+1]+1-(1:lags)] - mu)
       densMCMC <- densMCMC + dnorm(support, mean, sqrt(sigSq)) / MCsamples
     }
-    lower <- max(which(support < x[t+1]))
-    upper <- min(which(support > x[t+1]))
+    lower <- max(which(support < x[data[t+1]+1]))
+    upper <- min(which(support > x[data[t+1]+1]))
     
     if(lower == -Inf){
       lsMCMC <- log(densMCMC[upper])
     } else if(upper == Inf) {
       lSMCMC <- log(densMCMC[lower])
     } else {
-      lsMCMC <- log(linearInterpolate(support[lower], support[upper], densMCMC[lower], densMCMC[upper], x[t+1]))
+      lsMCMC <- log(linearInterpolate(support[lower], support[upper], densMCMC[lower], densMCMC[upper], x[data[t+1]+1]))
     }
     
-    forecast <- rbind(forecast,
-                      data.frame(t = t + 1,
+    forecast[[counter]] <- data.frame(t = data[t + 1],
                                  ls = lsMCMC,
                                  inference = 'MCMC',
                                  K = 1:3,
                                  runTime = NA,
                                  ESS = NA,
                                  ELBO = NA,
-                                 id = rep))
+                                 id = rep)
+    counter <- counter + 1
 }
 
 ## Apply VB approximations with K = 1, 2, or 3 component mixture approximations
@@ -132,356 +102,126 @@ for(K in 1:3){
     ISTotal <- 0
     VBTotal <- 0
     # Initial Lambda
-    if(K == 1){
-      lambda <- c(rnorm(1, -1, 0.1), rnorm(lags+1, 0, 0.1), chol(diag(1, dim)))
-    } else {
-      lambda <- c(rep(c(-1, rep(0, lags+1)), K) + rnorm(dim*K, 0, 0.1),
+    lambda <- c(rep(c(-1, rep(0, lags+1)), K) + rnorm(dim*K, 0, 0.1),
                   rnorm(dim*K, -1, 0.1),
                   rep(1, K))
       
-    }
       
     VBfit <- matrix(0, length(lambda), batches)
     for(t in 1:batches){
       startVB <- Sys.time()
-      if(!Update){
-        # VB Fits
-        #If K = 1, use the reparam gradients
-        if(K == 1){
-          VB <- fitVB(data = x[(data[1]+1 - lags):data[t+1]],
-                             lambda = lambda,
-                             model = gradARP,
-                             S = 25,
-                             dimTheta = dim,
-                             mean = priorMean,
-                             Linv = priorLinv,
-                             lags = lags)
+      # VB Fits
+      if(t == 1 | !Update){
+        VB <- fitVBScore(data = x[(data[1]+1 - lags):data[t+1]],
+                         lambda = lambda,
+                         model = AR3VB,
+                         dimTheta = 5,
+                         mix = K,
+                         S = 25,
+                         mean = matrix(priorMean, ncol = 1),
+                         SigInv = array(priorVarInv, dim = c(5, 5, 1)),
+                         weights = 1,
+                         dets = sqrt(det(priorVarInv)))
           
           VBfit[,t] <- VB$lambda
           ELBO <- VB$LB[VB$iter - 1]
-          
-        } else {
-          # Otherwise use score gradients
-          VB <- fitVBScore(data = x[(data[1]+1 - lags):data[t+1]],
-                                  lambda = lambda,
-                                  model = singlePriorMixApprox,
-                                  dimTheta = dim,
-                                  mix = K,
-                                  S = 25,
-                                  mean = priorMean,
-                                  varInv = priorVarInv,
-                                  lags = lags)
-          
-          VBfit[,t] <- VB$lambda
-          ELBO <- VB$LB[VB$iter - 1]
-          
-        }
-      } else {
-        # UVB fits, At time 1, VB = UVB
-        if(t == 1){
-          if(K == 1){
-            VB <- fitVB(data = x[(data[1]+1 - lags):data[t+1]],
-                               lambda = lambda,
-                               model = gradARP,
-                               S = 25,
-                               dimTheta = dim,
-                               mean = priorMean,
-                               Linv = priorLinv,
-                               lags = lags)
-            
-            VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[VB$iter - 1]
-            
-            
-          } else {
-            # Otherwise use score gradients
-            VB <- fitVBScore(data = x[(data[1]+1 - lags):data[t+1]],
-                                    lambda = lambda,
-                                    model = singlePriorMixApprox,
-                                    dimTheta = dim,
-                                    mix = K,
-                                    S = 25,
-                                    mean = priorMean,
-                                    varInv = priorVarInv,
-                                    lags = lags)
-            
-            
-            VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[VB$iter - 1]
-          }
-        } else {
-          # Otherwise apply UVB
-          if(K == 1){
-            # Reparam gradients
-            updateMean <- VBfit[1:dim, t-1]
-            updateU <- matrix(VBfit[(dim+1):(dim*(dim+1)), t-1], ncol = dim)
-            updateLinv <- t(solve(updateU))
-            
-            VB <- fitVB(data = x[(data[t]+1-lags):data[t+1]],
-                        lambda = VBfit[,t-1],
-                        model = gradARP,
-                        S = 25,
-                        dimTheta = dim,
-                        mean = updateMean,
-                        Linv = updateLinv,
-                        lags = lags)
-            
-            
-            VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[VB$iter - 1]
-          } else {
-            # Score gradients
-            updateMean <- matrix(VBfit[1:(dim*K), t-1], ncol = K)
-            updateVarInv <- array(0, dim = c(dim, dim, K))
-            dets <- rep(0, K)
-            for(k in 1:K){
-              sd <- exp(VBfit[dim*K + dim*(k-1) + 1:dim, t-1])
-              updateVarInv[,,k] <- diag(1/sd^2)
-              dets[k] <- 1 / prod(sd)
-            }
-            updateZ <- VBfit[dim*K*2 + 1:K, t-1] 
-            updateWeight <- exp(updateZ) / sum(exp(updateZ))
-            
-            VB<- fitVBScore(data = x[(data[t]+1-lags):data[t+1]],
-                                     lambda = VBfit[,t-1],
-                                     model = mixPriorMixApprox,
-                                     dimTheta = dim,
-                                     mix = K,
-                                     S = 25,
-                                     mean = updateMean,
-                                     SigInv = updateVarInv,
-                                     dets = dets,
-                                     weights = updateWeight,
-                                     lags = lags)
-            
-            VBfit[,t] <- VB$lambda
-            ELBO <- VB$LB[VB$iter - 1]
-              
-          }
-            
-        }
         
+      } else {
+        # UVB
+        updateMean <- fitMean
+        updateVarInv <- array(0, dim = c(dim, dim, K))
+        dets <- rep(0, K)
+        for(k in 1:K){
+          sd <- fitSd[,k]
+          updateVarInv[,,k] <- diag(1/sd^2)
+          dets[k] <- 1 / prod(sd)
+        }
+        updateWeight <- fitWeight
+          
+        VB<- fitVBScore(data = x[(data[t]+1-lags):data[t+1]],
+                        lambda = VBfit[,t-1],
+                        model = AR3VB,
+                        dimTheta = dim,
+                        mix = K,
+                        S = 25,
+                        mean = updateMean,
+                        SigInv = updateVarInv,
+                        dets = dets,
+                        weights = updateWeight)
+        VBfit[,t] <- VB$lambda
+        ELBO <- VB$LB[VB$iter - 1]
       }
+        #If K = 1, use the reparam gradients
+       
       endVB <- Sys.time() - startVB
       VBTotal <- VBTotal + as.numeric(endVB)
         
-      # Propogate particles forward for one step forecasts
-      for(s in 0:(updateSize-1)){
-        if(t == batches & s > 0){
-          break
-        }
-        # Initial Particles
-        if(s == 0){
-          # Easy sampling when K == 1
-          if(K == 1){
-            mean <- VBfit[1:dim, t]
-            u <- matrix(VBfit[(dim+1):(dim*(dim+1)), t], ncol = dim)
-            draw <- mvtnorm::rmvnorm(MCsamples, mean, t(u) %*% u)
-            weightVB <- rep(1 / MCsamples, MCsamples)
-            
-            startIS <- Sys.time()
-            qVB <- mvtnorm::dmvnorm(draw, mean, t(u) %*% u)
-            pVB <- ARjointDens(x[(data[1]+1 - lags):(data[t+1])], draw, priorMean, priorVarInv, lags)
-            wVB <- pVB / qVB
-            weightIS <- wVB / sum(wVB)
-            endIS <- Sys.time() - startIS
-            ISTotal <- ISTotal + as.numeric(endIS)
-            
-          } else {
-            # Mixture sampling is a bit more difficult
-            mean <- matrix(VBfit[1:(dim*K), t], ncol = K)
-            var <-  array(0, dim = c(dim, dim, K))
-            for(k in 1:K){
-              var[,,k] <- diag(exp(VBfit[dim*K + dim*(k-1) + 1:dim, t])^2)
-            }
-            Z <- VBfit[dim*K*2 + 1:K, t] 
-            pi <- exp(Z) / sum(exp(Z))
-            
-            draw <- matrix(0, MCsamples, dim)
-            for(i in 1:MCsamples){
-              group <- sample(1:K, 1, prob = pi)
-              draw[i, ] <- mvtnorm::rmvnorm(1, mean[,group], var[,,group])
-            }
-            weightVB <- rep(1 / MCsamples, MCsamples)
-            
-            startIS <- Sys.time()
-            
-            qVB <- rep(0, MCsamples)
-            for(i in 1:MCsamples){
-              for(k in 1:K){
-                qVB[i] <- qVB[i] + pi[k] * mvtnorm::dmvnorm(draw[i,], mean[,k], var[,,k])
-              }
-            }
-            pVB <- ARjointDens(x[(data[1]+1 - lags):(data[t+1])], draw, priorMean, priorVarInv, lags)
-            wVB <- pVB / qVB
-            weightIS <- wVB / sum(wVB)
-            endIS <- Sys.time() - startIS
-            ISTotal <- ISTotal + as.numeric(endIS)
-            
-          }
-          
-        } else {
-          
-          startIS <- Sys.time()
-          # Update Particles is always simple
-          pVB <- ARLikelihood(x[data[t+1] + (s-lags):s], draw, lags)
-          wVB <- wVB * pVB
-          weightIS <- wVB / sum(wVB)
-          endIS <- Sys.time() - startIS
-          ISTotal <- ISTotal + as.numeric(endIS)
-          
-        }
-        
-        # Set up forecast densities
-        densVB <- rep(0, 1000)
-        densIS <- rep(0, 1000)
-        # Create forecast densities by averaging over the 1000 draws
-        for(i in 1:MCsamples){
-          sigSq <- exp(draw[i, 1])
-          mu <- draw[i, 2]
-          phi <- draw[i, 3:(2 + lags)]
-          mean <- mu + phi %*% (x[(data[t+1]+s+1-(1:lags))] - mu)
-          densVB <- densVB + dnorm(support, mean, sqrt(sigSq)) * weightVB[i]
-          densIS <- densIS + dnorm(support, mean, sqrt(sigSq)) * weightIS[i]
-        }
-        lower <- max(which(support < x[data[t+1]+s+1]))
-        upper <- min(which(support > x[data[t+1]+s+1]))
-        
-        if(lower == -Inf){
-          lsVB <- log(densVB[upper])
-          lsIS <- log(densIS[upper])
-        } else if(upper == Inf) {
-          lsVB <- log(densVB[lower])
-          lsIS <- log(densIS[lower])
-        } else {
-          lsVB <- log(linearInterpolate(support[lower], support[upper], densVB[lower], densVB[upper], x[data[t+1]+s+1]))
-          lsIS <- log(linearInterpolate(support[lower], support[upper], densIS[lower], densIS[upper], x[data[t+1]+s+1]))
-        }
-        
-          
-        forecast <- rbind(forecast,
-                          data.frame(t = data[t+1] + s + 1,
-                                     ls = c(lsVB, lsIS),
-                                     inference = paste0(ifelse(Update, 'U', ''), c('VB', 'VB-IS')),
-                                     K = K,
-                                     runTime = c(VBTotal, VBTotal + ISTotal),
-                                     ESS = c(MCsamples, 1 / sum(weight^2)),
-                                     ELBO = ELBO,
-                                     id = rep))
-        
+      # Draw from VB
+      fitMean <- matrix(VBfit[1:(dim*K), t], ncol = K)
+      fitSd <- matrix(exp(VBfit[dim*K + 1:(dim*K), t]), ncol = K)
+      fitZ <- VBfit[2*dim*K + 1:K, t]
+      fitWeight <- exp(fitZ) / sum(exp(fitZ))
+      draw <- matrix(0, MCsamples, dim)
+      for(i in 1:MCsamples){
+        group <- sample(1:K, 1, prob = fitWeight)
+        draw[i, ] <- mvtnorm::rmvnorm(1, fitMean[,group], diag(fitSd[,group]^2))
       }
+      
+      # Importance Sample Weights
+      startIS <- Sys.time()
+            
+      qVB <- rep(0, MCsamples)
+      for(k in 1:K){
+        qVB <- qVB + fitWeight[k] *  mvtnorm::dmvnorm(draw, fitMean[,k], diag(fitSd[,group]^2))
+      }
+      pVB <- ARjointDens(x[(data[1]+1 - lags):(data[t+1])], draw, priorMean, priorVarInv, lags)
+      wVB <- pVB / qVB
+      weightIS <- wVB / sum(wVB)
+      endIS <- Sys.time() - startIS
+      ISTotal <- ISTotal + as.numeric(endIS)
+            
+      # Set up forecast densities
+      densVB <- rep(0, 1000)
+      densIS <- rep(0, 1000)
+      # Create forecast densities by averaging over the 1000 draws
+      for(i in 1:MCsamples){
+        sigSq <- exp(draw[i, 1])
+        mu <- draw[i, 2]
+        phi <- draw[i, 3:(2 + lags)]
+        mean <- mu + phi %*% (x[(data[t+1]+1-(1:lags))] - mu)
+        densVB <- densVB + dnorm(support, mean, sqrt(sigSq)) / MCsamples
+        densIS <- densIS + dnorm(support, mean, sqrt(sigSq)) * weightIS[i]
+      }
+      lower <- max(which(support < x[data[t+1]+1]))
+      upper <- min(which(support > x[data[t+1]+1]))
+        
+      if(lower == -Inf){
+        lsVB <- log(densVB[upper])
+        lsIS <- log(densIS[upper])
+      } else if(upper == Inf) {
+        lsVB <- log(densVB[lower])
+        lsIS <- log(densIS[lower])
+      } else {
+        lsVB <- log(linearInterpolate(support[lower], support[upper], densVB[lower], densVB[upper], x[data[t+1]+1]))
+        lsIS <- log(linearInterpolate(support[lower], support[upper], densIS[lower], densIS[upper], x[data[t+1]+1]))
+      }
+        
+          
+      forecast[[counter]] <- data.frame(t = data[t+1],
+                                        ls = c(lsVB, lsIS),
+                                        inference = paste0(ifelse(Update, 'U', ''), c('VB', 'VB-IS')),
+                                        K = K,
+                                        runTime = c(VBTotal, VBTotal + ISTotal),
+                                        ESS = c(MCsamples, 1 / sum(weightIS^2)),
+                                        ELBO = ELBO,
+                                        id = rep)
+      counter <- counter + 1
     }
   }
 }
-}
-
-write.csv(forecast, paste0('results/AR3_', min, '_', max, '.csv'), row.names = FALSE)
-
-forecast <- rbind(readr::read_csv('results/AR3_1_125.csv'),
-                  readr::read_csv('results/AR3_126_250.csv'),
-                  readr::read_csv('results/AR3_251_375.csv'),
-                  readr::read_csv('results/AR3_376_500.csv'))
-write.csv(forecast, 'results/AR3_full.csv', row.names = FALSE)
-library(tidyverse)
-forecast <- readr::read_csv('results/AR3_full.csv')
 
 
-forecast %>% 
-  select(-runTime, -ESS, -ELBO) %>%
-  spread(inference, ls) %>%
-  mutate(`VB-IS` = `VB-IS` - MCMC,
-         `UVB-IS` = `UVB-IS` - MCMC,
-         VB = VB - MCMC,
-         UVB = UVB - MCMC,
-         t = t - 100) %>%
-  select(t, K, `VB-IS`, `UVB-IS`, VB, UVB) %>%
-  gather(inference, diff, -t, -K) %>%
-  mutate(inference = factor(inference, levels = c('VB', 'VB-IS', 'UVB', 'UVB-IS'))) %>%
-  filter(!is.na(diff)) %>%
-  mutate(t = floor((t-1) / 5)) %>%
-  group_by(inference, t, K) %>%
-  summarise(med = median(diff),
-            l50 = quantile(diff, 0.25),
-            u50 = quantile(diff, 0.75)) %>%
-  ggplot() +
-  geom_ribbon(aes(t, ymin = l50, ymax = u50), fill = 'red', alpha = 0.4) +
-  geom_line(aes(t, med), colour = 'red', size = 1) +
-  geom_hline(aes(yintercept = 0), colour = 'black') +
-  facet_grid(K ~ inference) + 
-  theme_bw() + 
-  labs(x = 't', y = 'Median Difference in Logscores (Approximate Inference - Exact)')
+forecast <- do.call(rbind.data.frame, forecast)
 
+write.csv(forecast, paste0('results/AR3_', rep, '.csv'), row.names = FALSE)
 
-forecast %>% 
-  select(-runTime, -ESS, -ELBO) %>%
-  spread(inference, ls) %>%
-  mutate(`VB-IS` = `VB-IS` - MCMC,
-         `UVB-IS` = `UVB-IS` - MCMC,
-         VB = VB - MCMC,
-         UVB = UVB - MCMC,
-         t = t - 100) %>%
-  select(t, K, `VB-IS`, `UVB-IS`, VB, UVB) %>%
-  gather(inference, diff, -t, -K) %>%
-  mutate(inference = factor(inference, levels = c('VB', 'VB-IS', 'UVB', 'UVB-IS'))) %>%
-  filter(!is.na(diff)) %>%
-  mutate(t = floor((t-1) / 20),
-         t = ifelse(t == 20, 19, t)) %>%
-  ggplot() +
-  geom_boxplot(aes(factor(t), diff)) + 
-  facet_grid(K ~ inference) + 
-  coord_cartesian(ylim = c(-0.15, 0.5)) + 
-  theme_bw() + 
-  labs(x = 't', y = 'Median Difference in Logscores (Approximate Inference - Exact)')
-
-
-forecast %>% 
-  filter(inference != 'MCMC' & t %% 25 == 0) %>%
-  select(-ls, -ESS, -ELBO) %>%
-  spread(inference, runTime) %>%
-  mutate(`UVB-IS` = -(`UVB-IS` - VB) / VB * 100,
-         UVB = -(UVB - VB) / VB * 100,
-         `VB-IS` = -(`VB-IS` - VB) / VB * 100,
-         t = t - 100) %>%
-  gather(inference, diff, `UVB-IS`, `VB-IS`, UVB) %>%
-  mutate(inference = factor(inference, levels = c('VB-IS', 'UVB', 'UVB-IS'))) %>%
-  group_by(inference, t, K) %>%
-  filter(!is.na(diff)) %>%
-  summarise(mean = mean(diff),
-            med = median(diff),
-            l50 = quantile(diff, 0.25),
-            u50 = quantile(diff, 0.75)) %>%
-  ungroup() %>%
-  ggplot() +# geom_line(aes(t, mean)) +
-  geom_ribbon(aes(t, ymin = l50, ymax = u50), fill = 'red', alpha = 0.4) +
-  geom_line(aes(t, med), colour = 'red', size = 1) +
-  facet_grid(K ~ inference) + 
-  theme_bw() + 
-  labs(x = 't', y = '% Runtime Reduction Relative to VB')
-
-forecast %>%
-  filter(inference != 'MCMC' & !is.na(ls) & !is.na(runTime) & t %% 25 == 0) %>%
-  group_by(inference, id, K) %>%
-  mutate(lsPerSec = cumsum(ls) / runTime) %>%
-  ungroup() %>%
-  group_by(inference, K, t) %>%
-  summarise(lsPerSec = median(lsPerSec)) %>%
-  mutate(method = paste0(inference, '-', K)) %>%
-  ggplot() + geom_line(aes(t, lsPerSec, colour = method)) 
-
-
-
-
-forecast %>% 
-  filter(inference %in% c('VB-IS', 'UVB-IS')) %>%
-  mutate(t = (t-1) %% 25) %>%
-  group_by(inference, t, K) %>%
-  summarise(medESS = median(ESS),
-            lower = quantile(ESS, 0.25),
-            upper = quantile(ESS, 0.75)) %>%
-  ungroup() %>%
-  ggplot() + geom_line(aes(t, medESS), colour = 'red', size = 1) +
-  geom_ribbon(aes(x = t, ymin = lower, ymax = upper), alpha = 0.2, fill = 'red') + 
-  facet_grid(K ~ inference) + 
-  theme_bw() + 
-  labs(x = 't', y = 'IS mean effective sample size')
-  

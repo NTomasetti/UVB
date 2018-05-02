@@ -2,7 +2,6 @@ rm(list = ls())
 repenv <- Sys.getenv("SLURM_ARRAY_TASK_ID")
 rep <- as.numeric(repenv)
 
-
 library(Rcpp, lib.loc = 'packages')
 library(RcppArmadillo, lib.loc = 'packages')
 library(RcppEigen, lib.loc = 'packages')
@@ -12,19 +11,20 @@ sourceCpp('mixtureNormal.cpp')
 
 set.seed(rep)
 
-N <- 10
-T <- 200
-initialBatch <- 100
-updateSize <- 25
+N <- 100
+T <- 100
+initialBatch <- 10
+updateSize <- 10
 batches <- (T - initialBatch) / updateSize + 1
 data <- seq(initialBatch, T, length.out = batches)
-MCsamples <- 5000
+MCsamples <- 2000
 
-mu <- rnorm(2, 0, 0.5)
+mu <- rnorm(2, 0, 0.25)
 sigmaSq <- runif(2, 1, 2)
 group <- sample(0:1, N, replace = TRUE)
 y <- matrix(0, T, N)
-results <- data.frame()
+results <- list()
+counter <- 1
 
 for(i in 1:N){
   y[,i] <- rnorm(T, mu[group[i]+1], sqrt(sigmaSq[group[i]+1]))
@@ -43,9 +43,9 @@ for(t in 1:batches){
                          drawT = c(0.5, 0.5, 0, 0),
                          drawK = sample(0:1, N, replace = TRUE),
                          hyper = list(mean = priorMean, varInv = priorVarInv),
-                         thin = 10,
+                         thin = 1,
                          stepsize = 0.01)
-  keep <- floor(seq(1001, 1500, length.out = MCsamples))
+  keep <- floor(seq(10001, 15000, length.out = MCsamples))
   
   # Set up forecast density
   class <- rep(0, N)
@@ -59,14 +59,14 @@ for(t in 1:batches){
   }
   score <- max(sum(class == group), sum(class != group)) / N
   
-  results <- rbind(results,
-                   data.frame(t = data[t],
+  results[[counter]] <- data.frame(t = data[t],
                               score = score,
                               inference = 'MCMC',
                               K = 1:3,
                               runTime = NA,
                               ELBO = NA,
-                              id = rep))
+                              id = rep)
+  counter <- counter + 1
 }
 
 for(mix in 1:3){
@@ -106,7 +106,7 @@ for(mix in 1:3){
         dets <- rep(0, mix)
         for(k in 1:mix){
           updateVarInv[,,k] <- diag(1/fitSd[,k]^2)
-          dets[k] <- 1 / prod(sd)
+          dets[k] <- 1 / prod(fitSd[,k])
         }
         updateWeight <- fitWeight
         
@@ -127,6 +127,9 @@ for(mix in 1:3){
       }
       
       endVB <- Sys.time() - startVB
+      if(attr(endVB, 'units') == 'mins'){
+        endVB <- endVB * 60
+      }
       VBTotal <- VBTotal + as.numeric(endVB)
       
       drawVB <- matrix(0, MCsamples, 4)
@@ -145,20 +148,23 @@ for(mix in 1:3){
           probK[i, , j] <- probK2(y[1:data[t],j], drawVB[i,], c(log(0.5), log(0.5)))
         }
       }
-      probKMat <- apply(probK, c(1, 3), function(x) {y = x - max(x); exp(y[2]) / sum(exp(y))})
-      
+
       ISTimeStart <- Sys.time()
-      pTheta <- rep(0, MCsamples)
+      pTheta <- MNLogDens2(y[1:data[t], ], drawVB, 0.5, priorMean, priorVarInv)
       qTheta <- rep(0, MCsamples)
-      for(i in 1:MCsamples){
-        pTheta[i] <- MNLogDens2(y[1:data[t], ], drawVB[i, ], probKMat[i, ], priorMean, priorVarInv)
-        qTheta[i] <- mvtnorm::dmvnorm(drawVB[i,], fitMean[,component[i]], diag(fitSd[,component[i]]^2)) 
+      
+      for(k in 1:mix){
+        qTheta <- qTheta + fitWeight[k] *  mvtnorm::dmvnorm(drawVB, fitMean[,k], diag(fitSd[,k]^2)) 
       }
+
       pTheta <- pTheta - max(pTheta)
       weights <- exp(pTheta) / qTheta
       weights <- weights / sum(weights)
-      ISTimeFinish <- Sys.time() - ISTimeStart
-      ISTotal <- ISTotal + as.numeric(ISTimeFinish)
+      endIS <- Sys.time() - ISTimeStart
+      if(attr(endIS, 'units') == 'mins'){
+        endIS <- endIS * 60
+      }
+      ISTotal <- ISTotal + as.numeric(endIS)
       
       probKgroup1 <- apply(probK, 2:3, mean)
       probKgroup2 <- apply(probK, 2:3, function(x) sum(x * weights))
@@ -171,16 +177,17 @@ for(mix in 1:3){
       score1 <- max(sum(class1 == group), sum(class1 != group)) / N
       score2 <- max(sum(class2 == group), sum(class2 != group)) / N
       
-      results <- rbind(results,
-                       data.frame(t = data[t],
+      results[[counter]] <-  data.frame(t = data[t],
                                   score = c(score1, score2),
                                   inference = paste0(ifelse(Update, 'U', ''), c('VB', 'VB-IS')),
                                   K = mix,
                                   runTime = c(VBTotal, VBTotal + ISTotal), 
                                   ELBO = ELBO,
-                                  id = rep))
+                                  id = rep)
+      counter <- counter + 1
     }
   }
 }
 
+results <- do.call(rbind.data.frame, results)
 write.csv(results, paste0('mixNorm/N50_', rep, '.csv'), row.names = FALSE)

@@ -296,20 +296,26 @@ vec probK2(vec y, vec theta, vec kPrior){
 }
 
 // [[Rcpp::export]]
-double MNLogDens2(mat y, vec theta, vec probK, vec mean, mat VarInv){
+vec MNLogDens2(mat y, mat theta, double probK, vec mean, mat VarInv){
   int N = y.n_cols;
   int T = y.n_rows;
+  int M = theta.n_rows;
   
-  double logPrior = - 0.5 * as_scalar((theta - mean).t() * VarInv * (theta - mean));
-  
-  double logLik = 0;
-  for(int i = 0; i < N; ++i){
-    for(int t = 0; t < T; ++t){
-      logLik += log(
-        (1 - probK(i)) * pow(2 * 3.141598 * exp(theta(0)), -0.5) * exp(-pow(y(t, i) - theta(2), 2) / (2 * exp(theta(0)))) + 
-        probK(i) * pow(2 * 3.141598 * exp(theta(1)), -0.5) * exp(-pow(y(t, i) - theta(3), 2) / (2 * exp(theta(1))))
-      );
+  vec out(M);
+  for(int j = 0; j < M; ++j){
+    double logPrior = - 0.5 * as_scalar((theta.row(j).t() - mean).t() * VarInv * (theta.row(j).t() - mean));
+    
+    double logLik = 0;
+    for(int i = 0; i < N; ++i){
+      for(int t = 0; t < T; ++t){
+        logLik += log(
+          (1 - probK) * pow(2 * 3.141598 * exp(theta(j, 0)), -0.5) * exp(-pow(y(t, i) - theta(j, 2), 2) / (2 * exp(theta(j, 0)))) + 
+            probK * pow(2 * 3.141598 * exp(theta(j, 1)), -0.5) * exp(-pow(y(t, i) - theta(j, 3), 2) / (2 * exp(theta(j, 1))))
+        );
+      }
     }
+    out(j) = logLik + logPrior;
   }
-  return logLik + logPrior;
+ 
+  return out;
 }
