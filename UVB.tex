@@ -127,8 +127,8 @@ Aims:
 \item VB Updating to infer a posterior distribution in an online data setting
 \item Computational Efficiency for intractable models
 \item Explore approximation error for UVB and VB - Compare different q distributions
-\item Apply to various classes of problem
-\item Compare error to MCMC
+\item Show performance on simulated data sets
+\item Apply to short term load forecasting with smart meter data
 \end{itemize}
 
 Related Literature
@@ -137,6 +137,7 @@ Related Literature
 \item Particle Filters
 \item Varitional Bayesian Filtering: Vermaak, Lawrence \& Perez 2003, Smidl 2006, Jin \& Mokhtarian 2007, Smidl \& Quinn 2008
 \item Streaming Variational Bayes - Broderick et al. 2013
+\item The entirety of the STLF literature
 \end{itemize}
 
 \section{Offline Variational Bayes}
@@ -571,6 +572,104 @@ We create 100 datasets with $N = 50$ and $T = 100$, and infer the posterior dist
     \caption{Left: Average difference between proportion of correct classifications between approximate inferences and MCMC. Right: Average VB runtime for one approximation at time $T_n$ and average cumulative UVB runtime for each $T_1, T_2, \dots, T_n$. In this scenario the large amount of data significantly slows VB fits and degrades the gradient ascent optimisation relative to UVB.}%
     \label{fig:mixnormResults}%
 \end{figure}
+
+\section{Smart Meter Forecasting}
+
+\subsection{Lit Review}
+
+The electricity load forecasting literature is split into three categories: Short Term Load Forecasting (Up to a few days), Medium Term Load Forecasting (Typically weeks to months ahead) and Long Term Load Forecasting (A year or more in advance), each of which has a different application. Smart Meter (Grid) data is becoming more common, typically at the household level but occasionally Small/Medium Enterprises (SME) and is often modelled with the same approach as used for aggregate data. 
+\\
+
+We are most likely contributing to the Short Term literature, which is so far the largest. A wide range of models have been employed, particularly Neural Networks (usually one or two layers), Support Vector Machines, Stochastic Time Series (notably ARIMA, Exponential Smoothing, and their extensions though DLMs with Kalman Filters appear), as well as more recently additive semi-parametric models (add a spline function for weather to a spline function for past loads to a spline function for time of year etc.). 
+\\
+
+Machine Learning models and semi-parametrics are supported by their strength in modelling non-linear relationships between load, lags of load, and exogeneous variables such as temperature, humidity, or other weather conditions and time of day/week/year effects. It is widely agreed that temperature effects improve forecasts, even with the added problem of forecasting the temperature. Details on temperature forecasts are rare, but BoM one day forecasts are used by Rob Hyndman regularly. In households with both air-conditioning and heating, the temperature-load relationship is V shaped with a minimum at 18.3 C.
+\\
+
+Models are typically used to provide point estimates evaluated by MAPE, but density forecasts are becoming more popular, with quantile regression, scenario simulation + residual bootstraps, and conditional kernel density estimation employed, evaluated by MAPE, CRSP, or visually comparing ex-ante and ex-post densities. Bayesian models are rare but not completely absent.
+\\
+
+Half hour frequency data is common (possibly the most common short term forecasting frequency), and the non time-series models typically estimate 48 individual models, one for each half hour period, instead of explicitly modelling the intraday patterns. Restricted VAR models are an alternative, such as Tas' price forecasting model.
+\\
+
+An alternative literature explores load clustering and classification to allocate households into groups with similar behaviour without an explicit goal to then forecast load (eg. to infer consunption patterns to allow operators to manage supply). Several recent papers employ this idea in forecasting, where households are clustered by some method (typically K-means, though K-shape and a kernel based approach appears), and then aggregating each cluster, then forecasting each aggregate. These adds some degree of heterogeneity to an otherwise homogeneous literature.
+
+Our model would differ from the previous literature by:
+\begin{enumerate}
+\item Being fully Bayesian (or, at least, approximately).
+\item Employing online inference.
+\item Clustering as part of the model without aggregation.
+\item Considering a mixture of models.
+\end{enumerate}
+
+\subsection{Model}
+
+We consider half hourly electricity load data from 4443 Smart Meters in London for the period from 24/11/2011 until 28/02/2014 (Note: Will need to adjust number of households and time periods as sample sizes are not equal, see Figure 4). The following model is employed for each $i = 1, 2, \dots, N$, 
+
+\begin{equation}
+p(y_{i, t} | \theta, k_i, s_{i, t}, y_{i, 1:t-1}) = \sum{j=1}^K I(k_{i} = j) p_j(y_{i, t} | \theta, y_{i, 1:(t-1)}) + (1 - s_{i, t}) p_c (y_{i, t} | \theta)
+\end{equation}
+where $I(\cdot)$ is the indicator function and $s_{i, t} \in \{0, 1\}$. Each $p_j$ is the likelihood function for a time dependent model, and $p_c$ is the likelihood for a constant mean model. The overall model follows a Markov switching behaviour, where $s_{i, t} = 1$ implies that the household is occupied and electiricty load follows a time dynamic pattern, while $s_{i, t} = 0$ is a constant mean model used where a household may be away for extended periods and electricity load assumes a low level base load (Note: Separate model for each half hour / VAR structure?).  
+\\
+
+A mixture of $K$ dynamic models is employed to cluster households into one of $K$ time dependent patterns, where households in the same cluster share parameters. These models are composed of Seasonal Autogregressive Integrated Moving Average models with eXogenous temperature variables (SARIMAX) and Holt-Winters Exponential Smoothing (HWES) with multiple seasonalities (One day ago / One Week ago / One year ago?) fit to the residuals of a temperature model.
+\\
+
+These models are fit with UVB, first fitting models with one week/month/year's data (336 / ~10000 / 122640 observations), then repeatedly updating the fit with an additional days data (48 observations). After each fit, the electricity load for each household over each of the following 48 time periods is forecastedand evaluated with logscores / CRSP / MAPE.
+\\
+
+Each household has an indicator variable $k_i$, where $k_i \sim Multinomial(\pi)$ and $\pi \sim Dir(\alpha)$. This combination implies that
+\begin{equation}
+\label{kMarginalElec}
+p(k_i = j) = \frac{\Gamma(\sum_{l=1}^K \alpha_l)}{\Gamma(1 + \sum_{l=1}^K \alpha_l)} \frac{\Gamma(1 + \alpha_j)}{\Gamma(\alpha_j)}.
+\end{equation}
+\\
+
+Placing a prior $p(\theta)$ on $\theta$, We can produce a posterior marginalised over each $k_i$,
+\begin{align}
+\label{marginaliseK}
+p(\theta, s_{1:N, 1:T_n} | y_{1:N, 1:T_n}) &\propto p(\theta) \prod_{i=1}^N \prod_{t=\tau}^{T_n} p(s_{i, t} | s_{i, t-1}) \nonumber \\
+&\times  \left(s_{i, t} \sum_{j=1}^K p(k_i = j)p_j(y_{i, t} | \theta, y_{i, 1:t-1}) + (1 - s_{i, t}) p_c(y_{i, t} | \theta) \right).
+\end{align}
+
+The use of a Hamiltonian filter allows this to be further marginalised over each $s_{i, t}$ via
+\begin{equation}
+p(\theta | y_{1:N, 1:T_n}) \propto p(\theta)  \prod_{i=1}^N \prod_{t=\tau}^{T_n} \sum_{m=1}^2 \sum_{n=1}^2 \rho_{mn} \zeta_{i, t-1, m} \eta_{i, t, n}
+\end{equation}
+where
+\begin{align}
+\rho_{mn} &= p(s_{i, t} = n | s_{i, t-1} = m) \mbox{ assumed constant for all } i, t \\
+\zeta_{i, t-1, m} &= p(s_{i, t-1} = m | \theta, y_{i, 1:t-1}) \\
+\eta_{i, t, n} &= p(y_{i, t} | \theta, s_{i, t = n}, y_{i, 1:t-1}) \\
+&= \sum_{j=1}^K p(k_i = j)p_j(y_{i, t} | \theta, y_{i, 1:t-1}) + (1 - s_{i, t}) p_c(y_{i, t} | \theta).
+\end{align}
+
+At each time point $\zeta_{i, t, n}$ can be calculated via
+\begin{equation}
+s_{i, t, n} = \frac{ \sum_{m=1}^2 \rho_{mn} \zeta_{i, t-1, m} \eta_{i, t, n}}{ \sum_{m=1}^2 \sum_{n=1}^2 \rho_{mn} \zeta_{i, t-1, m} \eta_{i, t, n}}
+\end{equation}
+
+We can then fit an approximating distribution $q(\theta | y_{1:N, 1:T_n})$ to the fully marginalised posterior.
+
+It could be worthwhile to include a Box-Cox transformation of the dependent variable,
+\begin{equation}
+y_t^{\omega} = \left\{ \begin{array}{c} \frac{y_t^{\omega} - 1}{\omega}\mbox{ for } \omega \neq 0 \\ \log(y_t) \mbox{ for } \omega = 0\end{array}\right.
+\end{equation}
+We will need the density to be differentiable with respect to $\omega$ for this to be part of the VB optimisation, so must exclude the $\log(y_t)$ case by ensuring $q(\omega)$ has zero probability mass on zero (ie. continuous). Then 
+\begin{equation}
+p_{y^{\omega}}(y_t^{\omega} | \theta) = p_y(y_t^{\omega} | \theta) y_t^{\omega - 1} \mbox{ for } \omega \neq 0
+\end{equation}
+and $\omega$ can be included in the parameter vector $\theta$. We could also include $K$ $\omega_j$ variables for each component of the mixture. 
+\\
+
+The model is compared to other popular models for this type of data (TBD).
+
+\begin{figure}
+\centering
+\includegraphics{electricity/households}
+\caption{Amount of households in the sample for a given number of days until 28/02/2014.}
+\end{figure}
+
 
 \bibliographystyle{asa}
 \bibliography{references}

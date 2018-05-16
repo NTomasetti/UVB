@@ -164,7 +164,6 @@ struct Qlogdens {
     const{
     using std::log; using std::exp; using std::pow; using std::sqrt; using std::lgamma;
     
-    
     Matrix<T, Dynamic, 1> dets(mix);
     for(int k = 0; k < mix; ++k){
       dets(k) = exp(lambda(4*k + 4*mix));
