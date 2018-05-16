@@ -1,21 +1,21 @@
 library(tidyverse)
 library(lubridate)
-
 library(Rcpp)
 library(RcppArmadillo)
 library(RcppEigen)
 library(rstan)
 source('RFuns.R')
 sourceCpp('electricity/electricityVB.cpp')
+N <- 20
 
 full <- readr::read_csv('electricity/elecdataBal.csv')
-set.seed(1)
+set.seed(3)
 
-N <- 20
+
 
 full %>%
   group_by(ID) %>%
-  filter(date(time) >= '2013-04-01' & date(time) <= '2013-06-01' & tariff == 'Std') %>%
+  filter(date(time) >= '2013-06-01' & date(time) <= '2013-08-01' & tariff == 'Std') %>%
   filter(all(!is.na(energy))) %>%
   summarise(n = n()) %>%
   filter(n == 2976) %>%
@@ -23,7 +23,7 @@ full %>%
   sample(N) -> IDvec
 
 full %>%
-  filter(ID %in% IDvec & date(time) >= '2013-04-01' & date(time) <= '2013-06-01') %>%
+  filter(ID %in% IDvec & date(time) >= '2013-06-01' & date(time) <= '2013-08-01') %>%
   select(time, ID, energy) %>%
   spread(ID, energy) -> data
 
@@ -33,22 +33,25 @@ data %>%
 
 full %>%
   filter(ID == IDvec[1] & 
-           date(time) >= '2013-04-24' &
-           date(time) <= '2013-06-01') %>%
+           date(time) >= '2013-06-01' &
+           date(time) <= '2013-08-01') %>%
   .$temp -> x
+
+saveRDS(y, 'electricity/elecY.RDS')
+saveRDS(x, 'electricity/elecX.RDS')
 
 y <- readRDS('electricity/elecY.RDS')[,1:N]
 x <- readRDS('electricity/elecX.RDS')
 
-Tseq <- c(48 * 7, 48 * 7 * 3)
-for(t in 1:(32-14)){
-  Tseq <- c(Tseq, 48 * (21 + t))
+Tseq <- c(48 * 7, 48 * 7 * 5)
+for(t in 1:(62-35)){
+  Tseq <- c(Tseq, 48 * (35 + t))
 }
 
-K <- c(2, 5, 10)
+K <- c(1, 3)
 order <- c(1, 2, 3, 48, 96, 144, 336)
 dim <- 3 + length(order)
-samples <- 25
+samples <- 250
 switch <- 0
 k <- 2
 
