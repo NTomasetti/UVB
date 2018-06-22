@@ -109,7 +109,7 @@
 \IfFileExists{upquote.sty}{\usepackage{upquote}}{}
 \IfFileExists{upquote.sty}{\usepackage{upquote}}{}
 
-\title{Updating Variational Bayes}
+\title{Updating Variational Bayes for Online Inference and Forecasting of Smart Meter Data}
 \author{Nathaniel Tomasetti 
 \and Catherine Forbes
 \and Anastasios Panagiotelis}
@@ -121,6 +121,25 @@
 
 \section{Introduction}
 \label{sec:intro}
+
+\begin{itemize}
+\item Many time-series have data observed in an online setting, where additional information becomes available regularly
+\item We extend variational bayes, a popular technique for approximate bayesian inference, to online data by the bayesian updating recurrence.
+\item The approximation accuracy and runtime of VB, UVB and exact MCMC based inference are compared for several simulated datasets
+\item UVB is applied to online inference of smart meter data, where the high dimensionality and frequency of observations prohibits the use of MCMC.
+\item This allows us to build a model that incorporates household heterogeneity for probabilistic forecasts of short term electricity demand.
+\item The results improve on a homogeneous model by X\%.
+\end{itemize}
+The paper is arrange as follows
+\begin{enumerate}
+\item Overview of Variational Bayes
+\item The proposed extension to Updating Variational Bayes
+\item An importance sampler to trade accuracy and runtime
+\item A few simulated data studies
+\item The electricity forecasting
+\end{enumerate}
+
+Note: Only sections 3, 4, and 5 are required to form a stand alone UVB thesis chapter.
 
 Aims:
 \begin{itemize}
@@ -143,42 +162,42 @@ Related Literature
 \section{Offline Variational Bayes}
 \label{sec:Inference}
 
-Let $x_{1:T}$ be a sequence of observed data up to some time $T$, associated with a model conditioned on some unknown parameter vector $\theta$ given by
+Let $y_{1:T}$ be a sequence of observed data up to some time $T$, associated with a model conditioned on some unknown parameter vector $\theta$ given by
 \begin{equation}
 \label{likelihood}
-p(x_{1:T} | \theta) = p(x_1) \prod_{t=2}^{T_1} p(x_t | x_{1:t-1}, \theta).
+p(y_{1:T} | \theta) = p(y_1) \prod_{t=2}^{T} p(y_t | y_{1:t-1}, \theta).
 \end{equation}
 When the model is augmented with some prior distribution $p(\theta)$, the posterior distribution at time $T$ is given by
 \begin{equation}
 \label{posterior}
-p(\theta | x_{1:T}) = \frac{p(x_{1:T} | \theta)p(\theta)}{\int_{\theta}p(x_{1:T} | \theta)p(\theta)d\theta}.
+p(\theta | y_{1:T}) = \frac{p(y_{1:T} | \theta)p(\theta)}{\int_{\theta}p(y_{1:T} | \theta)p(\theta)d\theta}.
 \end{equation}
 \\
 
-For many models the integral in (\ref{posterior}) does not admit an analytical solution, and numeric integration may become computationally infeasable if $\theta$ is of a sufficiently high dimension. One method to infer the posterior distribution, that is popular for its computational speed, is Variational Bayes (VB, see \citet{Blei2017} for a recent review). VB replaces the posterior distribution with a parametric approximation, denoted by $q_{\lambda}(\theta |x_{1:T})$, where $\lambda$ is a vector of auxiliary parameters associated with the approximation that may depend on the observations $x_{1:T}$.
+For many models the integral in (\ref{posterior}) does not admit an analytical solution, and numeric integration may become computationally infeasable if $\theta$ is of a sufficiently high dimension. One method to infer the posterior distribution, that is popular for its computational speed, is Variational Bayes (VB, see \citet{Blei2017} for a recent review). VB replaces the posterior distribution with a parametric approximation, denoted by $q_{\lambda}(\theta |y_{1:T})$, where $\lambda$ is a vector of auxiliary parameters associated with the approximation that may depend on the observations $y_{1:T}$.
 
 \subsection{Variational Bayes}
 \label{subsec:VB}
 
-VB posits a family of parametric approximating distributions $q_{\lambda}\theta |x_{1:T})$, parameterised by an auxiliary vector $\lambda$, that share the same support as the true posterior distribution $p(\theta |x_{1:T})$. Note that $q_{\lambda}(\theta |x_{1:T})$ does not neccesarily depend on $x_{1:T}$, but this notation is used to make it clear that this distribution is an approximation for $p(\theta |x_{1:T})$. A member of the approximating family is chosen to minimise some error function, typically the Kullback-Leibler (KL) divergence from $q_{\lambda}(\theta |x_{1:T})$ to $p(\theta |x_{1:T})$, given by $KL[q_{\lambda}(\theta |x_{1:T})\hspace{.1cm}||\hspace{.1cm}p(\theta |x_{1:T})]$ \citep{Kullback1951}. The KL divergence is defined by
+VB posits a family of parametric approximating distributions $q_{\lambda}(\theta |y_{1:T})$, parameterised by an auxiliary vector $\lambda$, that shares the same support as the true posterior distribution $p(\theta |y_{1:T})$. Note that $q_{\lambda}(\theta |y_{1:T})$ does not neccesarily depend on $y_{1:T}$, but this notation is used to make it clear that this distribution is an approximation for $p(\theta |y_{1:T})$. A member of the approximating family is chosen to minimise some error function, typically the Kullback-Leibler (KL) divergence from $q_{\lambda}(\theta |y_{1:T})$ to $p(\theta |y_{1:T})$, given by $KL[q_{\lambda}(\theta |y_{1:T})\hspace{.1cm}||\hspace{.1cm}p(\theta |y_{1:T})]$ \citep{Kullback1951}. The KL divergence is defined by
 \begin{equation}
 \label{KL-def}
-KL[q_{\lambda}(\theta |x_{1:T})\hspace{.1cm}||\hspace{.1cm}p(\theta |x_{1:T})] = E_q \left[ \log(q_{\lambda}(\theta |x_{1:T})) - \log(p(\theta |x_{1:T})) \right],
+KL[q_{\lambda}(\theta |y_{1:T})\hspace{.1cm}||\hspace{.1cm}p(\theta |y_{1:T})] = E_q \left[ \log(q_{\lambda}(\theta |y_{1:T})) - \log(p(\theta |y_{1:T})) \right],
 \end{equation}
-and is a non-negative, asymmetric measure of the discrepancy between $p(\theta |x_{1:T})$ and $q_{\lambda}(\theta | x_{1:T})$  that will be equal to zero if and only if $p(\theta | x_{1:T}) = q_{\lambda}(\theta | x_{1:T})$ almost everywhere \citep{Bishop2006}.
+and is a non-negative, asymmetric measure of the discrepancy between $p(\theta |y_{1:T})$ and $q_{\lambda}(\theta | y_{1:T})$  that will be equal to zero if and only if $p(\theta | y_{1:T}) = q_{\lambda}(\theta | y_{1:T})$ almost everywhere \citep{Bishop2006}.
 \\
 
-Typically the expectation in (\ref{KL-def}) is intractable, and Monte-Carlo estimates are compuationally infeasible due to the inclusion of the term $p(\theta | x_{1:T})$, which is only known up to proportionality. Instead VB uses the Evidence Lower Bound (ELBO), denoted by $\mathcal{L}(q, \lambda)$, as an error function where
+Typically the expectation in (\ref{KL-def}) is intractable, and Monte-Carlo estimates are compuationally infeasible due to the inclusion of the term $p(\theta | y_{1:T})$, which is only known up to proportionality. Instead VB uses the Evidence Lower Bound (ELBO), denoted by $\mathcal{L}(q, \lambda)$, as an error function where
 \begin{equation}
 \label{ELBO}
-\mathcal{L}(q, \lambda) = E_q \left[\log(p(\theta, x_{1:T})) - \log(q_{\lambda}(\theta | x_{1:T}))\right],
+\mathcal{L}(q, \lambda) = E_q \left[\log(p(\theta, y_{1:T})) - \log(q_{\lambda}(\theta | y_{1:T}))\right],
 \end{equation}
 which is evaluated with Monte-Carlo estimates
 \begin{equation}
 \label{ELBO-MC}
-\mathcal{L}(q, \lambda) \approx \frac{1}{M} \sum_{j=1}^M \left(\log(p(\theta_{j}, x_{1:T})) - \log(q_{\lambda}(\theta_{j} | x_{1:T})) \right)
+\mathcal{L}(q, \lambda) \approx \frac{1}{M} \sum_{j=1}^M \left(\log(p(\theta_{j}, y_{1:T})) - \log(q_{\lambda}(\theta_{j} | y_{1:T})) \right)
 \end{equation}
-where $\theta_{j} \sim q_{\lambda}(\theta | x_{1:T})$. The ELBO is equal to the negative KL divergence plus a constant, and hence maximising (\ref{ELBO}) with respect to $q_{\lambda}(\theta | x_{1:T})$ is equivalent to minimising (\ref{KL-def}).
+where $\theta_{j} \sim q_{\lambda}(\theta | y_{1:T})$. The ELBO is equal to the negative KL divergence plus a constant, and hence maximising (\ref{ELBO}) with respect to $q_{\lambda}(\theta | y_{1:T})$ is equivalent to minimising (\ref{KL-def}).
 
 \subsection{Stochastic Gradient Ascent}
 \label{subsec:SGA}
@@ -200,100 +219,112 @@ until the change from $\mathcal{L}(q, \lambda^{(m)})$ to $\mathcal{L}(q, \lambda
 There are two popular choices for the Monte Carlo estimator of $\partial\mathcal{L}(q, \lambda) / \partial \lambda$, the score estimator of \citet{Ranganath2014}, 
 \begin{equation}
 \label{scoreDeriv}
-\widehat{\frac{\partial\mathcal{L}(q, \lambda)}{\partial \lambda}}_{SC} = \sum_{j = 1}^M \frac{\partial \log(q_{\lambda}(\theta_{j} | x_{1:T}))}{\partial \lambda} \left(\log(p(\theta_{j}, x_{1:T})) - \log(q_{\lambda}(\theta_{j} | x_{1:T})) \right),
+\widehat{\frac{\partial\mathcal{L}(q, \lambda)}{\partial \lambda}}_{SC} = \sum_{j = 1}^M \frac{\partial \log(q_{\lambda}(\theta_{j} | y_{1:T}))}{\partial \lambda} \left(\log(p(\theta_{j}, y_{1:T})) - \log(q_{\lambda}(\theta_{j} | y_{1:T})) \right),
 \end{equation}
-where $\theta_{j} \sim q_{\lambda}(\theta | x_{1:T})$, and the reparameteterised estimator of \citet{Kingma2014}. Reparameterisation introduces an auxiliary variable $\epsilon$ and differentiable function $f(\cdot, \cdot)$ to rephrase Variational Bayes optimisation as the equivalent search for the parameters $\lambda$ that minimises the Kullback Leibler divergence from some distribution $q(\epsilon)$ with zero free parameters to the posterior distribution implied by the transformation $\theta = f(\epsilon, \lambda)$:
+where $\theta_{j} \sim q_{\lambda}(\theta | y_{1:T})$, and the reparameteterised estimator of \citet{Kingma2014}. Reparameterisation introduces an auxiliary variable $\epsilon$ and differentiable function $f(\cdot, \cdot)$ to rephrase Variational Bayes optimisation as the equivalent search for the parameters $\lambda$ that minimises the Kullback Leibler divergence from some distribution $q(\epsilon)$ with zero free parameters to the posterior distribution implied by the transformation $\theta = f(\epsilon, \lambda)$:
 \begin{equation}
 \label{rpDist}
-p(f(\epsilon, \lambda) | x_{1:T}) = p(\theta | x_{1:T}) |J^{-1}(f(\epsilon, \lambda))|
+p(f(\epsilon, \lambda) | y_{1:T}) = p(\theta | y_{1:T}) |J^{-1}(f(\epsilon, \lambda))|
 \end{equation}
-where $J(f(\epsilon, \lambda))$ is the Jacobian Matrix of the transformation $f(\epsilon, \lambda)$. Examples of $f$ and $q(\epsilon)$ include treating $\theta$ as location-scale transformation from a standard normal $\epsilon$, or an inverse-CDF transformation from a uniform$(0, 1)$ $\epsilon$. 
+where $J(f(\epsilon, \lambda))$ is the Jacobian Matrix of the transformation $f(\epsilon, \lambda)$. Examples of $f$ and $q(\epsilon)$ include treating $\theta$ as location-scale transformation from a standard normal $q(\epsilon)$, or an inverse-CDF transformation from a uniform$(0, 1)$ $q(\epsilon)$. 
 \\
 
-The ELBO can be reparameterised by substituting $p(\theta, x_{1:T}) = p(f(\epsilon, \lambda), x_{1:T})|J(f(\epsilon, \lambda))|$ into (\ref{ELBO}),
+The ELBO can be reparameterised by substituting $p(\theta, y_{1:T}) = p(f(\epsilon, \lambda), y_{1:T})|J(f(\epsilon, \lambda))|$ into (\ref{ELBO}),
 \begin{equation}
 \label{rpELBO}
-\mathcal{L}(q, \lambda) = E_{r(\epsilon)} \bigg[\log(p(f(\epsilon,\lambda), x_{1:T})|J(f(\epsilon, \lambda))|) - \log(q(\epsilon))\bigg].
+\mathcal{L}(q, \lambda) = E_{r(\epsilon)} \bigg[\log(p(f(\epsilon,\lambda), y_{1:T})|J(f(\epsilon, \lambda))|) - \log(q(\epsilon))\bigg].
 \end{equation}
 The gradient of the reparameterised ELBO with respect to $\lambda$ is given by 
 \begin{align}
 \label{rpELBODeriv}
-\frac{\partial\mathcal{L}(q, \lambda)}{\partial \lambda} &= \frac{\partial}{\partial \lambda} \bigg( E_{q(\epsilon)} \bigg[\log\big(p(f(\epsilon,\lambda), x_{1:T})|J(f(\epsilon, \lambda))|\big) - \log(q(\epsilon))\bigg] \bigg) \nonumber \\
-&= E_{q(\epsilon)} \left[ \frac{\partial}{\partial \lambda} \bigg(\log(p(f(\epsilon,\lambda), x_{1:T})) + \log(|J(f(\epsilon, \lambda))|) - \log(q(\epsilon)) \bigg)\right] \nonumber \\
-&= E_{q(\epsilon)} \left[ \frac{\partial \log(p(f(\epsilon,\lambda), x_{1:T}))}{\partial f(\epsilon,\lambda)} \frac{\partial f(\epsilon,\lambda)}{\partial \lambda}  + \frac{\partial \log(|J(f(\epsilon, \lambda))|)}{\partial \lambda} \right].
+\frac{\partial\mathcal{L}(q, \lambda)}{\partial \lambda} &= \frac{\partial}{\partial \lambda} \bigg( E_{q(\epsilon)} \bigg[\log\big(p(f(\epsilon,\lambda), y_{1:T})|J(f(\epsilon, \lambda))|\big) - \log(q(\epsilon))\bigg] \bigg) \nonumber \\
+&= E_{q(\epsilon)} \left[ \frac{\partial}{\partial \lambda} \bigg(\log(p(f(\epsilon,\lambda), y_{1:T})) + \log(|J(f(\epsilon, \lambda))|) - \log(q(\epsilon)) \bigg)\right] \nonumber \\
+&= E_{q(\epsilon)} \left[ \frac{\partial \log(p(f(\epsilon,\lambda), y_{1:T}))}{\partial f(\epsilon,\lambda)} \frac{\partial f(\epsilon,\lambda)}{\partial \lambda}  + \frac{\partial \log(|J(f(\epsilon, \lambda))|)}{\partial \lambda} \right].
 \end{align}
 This form leads to the reparameterised gradient estimator,
 \begin{equation}
 \label{rpDeriv}
-\widehat{\frac{\partial\mathcal{L}(q, \lambda)}{\partial \lambda}}_{RP} = \sum_{j = 1}^M \frac{\partial f(\lambda, \epsilon_j)}{\partial \lambda} \frac{\partial \log(p(\theta, x_{1:T}))}{\partial \theta} \bigg\rvert_{\theta = f(\lambda, \epsilon_j)} + \frac{\partial \log(J(f(\lambda, \epsilon_j)))}{\partial \lambda}, 
+\widehat{\frac{\partial\mathcal{L}(q, \lambda)}{\partial \lambda}}_{RP} = \sum_{j = 1}^M \frac{\partial f(\lambda, \epsilon_j)}{\partial \lambda} \frac{\partial \log(p(\theta, y_{1:T}))}{\partial \theta} \bigg\rvert_{\theta = f(\lambda, \epsilon_j)} + \frac{\partial \log(J(f(\lambda, \epsilon_j)))}{\partial \lambda}, 
 \end{equation}
-where $\epsilon_j \sim q(\epsilon)$. The reparameterised gradient estimator typically has lower variance than the score estimator (see eg. \cite{Rezende2014}; \cite{Ruiz2016}), but treating $q_{\lambda}(\theta | x_{1:T})$ as the distribution implied by the transformation $f$ of $q(\epsilon)$ restricts the class of approximating families that can be used.
+where $\epsilon_j \sim q(\epsilon)$. The reparameterised gradient estimator typically has lower variance than the score estimator (see eg. \cite{Rezende2014}; \cite{Ruiz2016}), but treating $q_{\lambda}(\theta | y_{1:T})$ as the distribution implied by the transformation $f$ of $q(\epsilon)$ restricts the class of approximating families that can be used.
 \\
 
 \section{Updating Variational Bayes}
 \label{sec:UVB}
 
-If additional data is constantly being observed in an online setting, there may a sequence of time points $T_1, T_2, \dots$, from which a sequence of posterior distributions $p(\theta | x_{1:T_1}), p(\theta | x_{1:T_2}), \dots$, may be inferred, which is illustrated in Figure \ref{fig:timeUpdate} for data taken from vehicle travelling towards the right. In the left panel, the vehicle has been observed for a time period $T_{n-1}$ resulting in data $x_{1:T_{n-1}}$ which can be incorporated into the Variational Bayes posterior approximation $q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}})$. In the right panel, after observation for an additional period to time $T_{n}$, an additional $T_{n} - T_{n-1}$ data points are available, and posterior inference could be improved by incorporating the information contained in $x_{T_{n-1}+1:T_{n}}$ to form the posterior approximation $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$. Note that the $n-1$ and $n$ subscripts on $\lambda$ are introduced to differentiate the auxiliary parameter vector conditioned on data up to times $T_{n-1}$ and $T_{n}$. To facilitate this posterior update, an Updating Variational Bayes (UVB) mechanism is introduced where only $x_{T_{n-1}+1:T_{n}}$ needs to be processed.
+We extend our discussion to settings where data is regularly being observed in an online setting, resulting in a sequence of time points $T_1, T_2, \dots$, from which a sequence of posterior distributions $p(\theta | y_{1:T_1}), p(\theta | y_{1:T_2}), \dots$, may be desired. We assume that the computational cost of inferring each posterior through exact inference techniques is prohibitively large.
+\\
+
+This is illustrated in Figure \ref{fig:timeUpdate} for data taken from vehicle travelling towards the right. In the left panel, the vehicle has been observed for a time period $T_{n}$ resulting in data $y_{1:T_{n}}$ which can be incorporated into the Variational Bayes posterior approximation $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$. In the right panel, after observation for an additional period to time $T_{n+1}$, an additional $T_{n+1} - T_{n}$ data points are available, and posterior inference could be improved by incorporating the information contained in $y_{T_{n}+1:T_{n+1}}$ to form the posterior approximation $q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})$. Note that the $n$ and $n+1$ subscripts on $\lambda$ are introduced to differentiate the auxiliary parameter vector conditioned on data up to times $T_{n}$ and $T_{n+1}$.
+\\
+
+To facilitate this posterior update, an Updating Variational Bayes (UVB) mechanism is introduced where only the additional data $y_{T_{n}+1:T_{n+1}}$ needs to be processed, and the computation required by the update does not increase with $n$.
 \begin{figure}[ht]
 \centering
-\includegraphics[width = 0.95\textwidth]{timeUpdate}
-\caption{Left: The path of a vehicle in the NGSIM dataset tat has been observed for a time period equal to $T_{n-1}$, where the direction of travel is from the left to the right. Right: The same vehicle at a later time $T_{n}$, with the extra $T_{n} - T_{n-1}$ observations denoted by the dashed line. Posterior inference about this vehicle could be updated from time $T_{n-1}$ to time $T_{n}$ by the inclusion of this additional information.}
+\includegraphics[width = 0.95\textwidth]{carUpdate}
+\caption{Left: The path of a vehicle in the NGSIM dataset that has been observed for a time period equal to $T_{1}$, where the direction of travel is from the left to the right. Right: The same vehicle at a later time $T_{2}$, with the extra $T_{2} - T_{1}$ observations denoted by the dashed line. Posterior inference about this vehicle could be updated from time $T_{1}$ to time $T_{2}$ by the inclusion of this additional information.}
 \label{fig:timeUpdate}
 \end{figure}
 \\
 
-From Bayes Rule, the posterior distribution at time $T_{n}$, $p(\theta | x_{1:T_{n}})$ is given by
+To facilitate this posterior update, an Updating Variational Bayes (UVB) mechanism is introduced where only the additional data $y_{T_{n}+1:T_{n+1}}$ needs to be processed, and the computation required by the update does not increase with $n$.
+\\
+
+From Bayes Rule, the posterior distribution at time $T_{n+1}$, $p(\theta | y_{1:T_{n+1}})$ is given by
 \begin{equation}
 \label{truePost}
-p(\theta | x_{1:T_n}) \propto p(x_{1:T_n} | \theta)p(\theta).
+p(\theta | y_{1:T_{n+1}}) \propto p(y_{1:T_{n_1}} | \theta)p(\theta).
 \end{equation}
-Standard Bayesian compuational methods, including VB, require the evaluation of the right hand side of (\ref{truePost}), where the likelihood is given by (\ref{likelihood}), the product of $T_n$ terms. If the posterior at time $T_{n-1}$ is available (\ref{truePost}) is equivalently given by the Bayesian update rule,
+Standard Bayesian compuational methods, including VB, require the evaluation of the right hand side of (\ref{truePost}), where the likelihood is given by (\ref{likelihood}), the product of $T_n$ terms. If the posterior at time $T_{n}$ is available, we can consider a likelihood that is a product of only $T_{n+1} - T_{n}$ terms by applying Bayes' Rule,
 \begin{equation}
 \label{updatePost}
-p(\theta | x_{1:T_{n}}) \propto p(x_{T_{n-1}+1:T_{n}} | x_{1:T_{n-1}}, \theta)p(\theta | x_{1:T_{n-1}}),
+p(\theta | y_{1:T_{n+1}}) \propto p(y_{T_{n}+1:T_{n+1}} | y_{1:T_{n}}, \theta)p(\theta | y_{1:T_{n}}),
 \end{equation}
-where the right hand side now includes a product of only $T_{n} - T_{n-1}$ terms. However computation of $p(\theta | x_{1:T_{n-1}})$ is often infeasible, and Bayesian updating cannot be applied in practice. Instead, posterior inference is only available using (\ref{truePost}). 
+However, many Bayesian computational methods require the evaluation of $p(\theta | y_{1:T_{n}})$ at arbitrary values of $\theta$, which is compuationally infeasible for many posterior distributions of interest and so the more computationally intensive (\ref{truepost}) is typically applied instead.
+\\
 
-To allow Bayesian updating to be applied, UVB replaces $p(\theta | x_{1:T_{n-1}})$ with the approximation at the previous time-step, $q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}})$, which results in the posterior distribution
+To allow Bayesian updating to be applied, UVB replaces $p(\theta | y_{1:T_{n}})$ with the approximation at the previous time-step, $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$, which results in the posterior distribution
 \begin{equation}
 \label{pHatPosterior}
-\hat{p}(\theta |  x_{1:T_{n}}) \propto p(x_{T_{n-1}+1:T_{n}} | \theta)q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}}).
+\hat{p}(\theta |  y_{1:T_{n+1}}) \propto p(y_{T_{n}+1:T_{n+1}} | \theta)q_{\lambda_{n}}(\theta | y_{1:T_{n}}).
 \end{equation}
-UVB then constructs the approximating distribution $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$ by choosing the vector $\lambda_{n}$ for a fixed family $q$ that minimises the Kullback-Leibler divergence from $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$ to $\hat{p}(\theta |  x_{1:T_{n}})$ by standard ELBO gradient optimisation methods discussed in Section \ref{subsec:SGA}.
+UVB then selects the approximating distribution $q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})$ by minimising the Kullback-Leibler divegence from $q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})$ to $\hat{p}(\theta |  y_{1:T_{n+1}})$ by standard ELBO gradient optimisation methods discussed in Section \ref{subsec:SGA}.
 \\
 
 \iffalse
-The ELBO gradient estimators to construct the updated Variational Bayes approximation $q_{\lambda_{n}}(\theta | x_{1:T_{n}})$, can be obtained by substituting 
+The ELBO gradient estimators to construct the updated Variational Bayes approximation $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$, can be obtained by substituting 
 \begin{equation}
 \label{ApproxJoint}
-\hat{p}(\theta |  x_{1:T_{n}}) = p(x_{T_{n-1}+1:T_{n}} | \theta)q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}}).
+\hat{p}(\theta |  y_{1:T_{n}}) = p(y_{T_{n-1}+1:T_{n}} | \theta)q_{\lambda_{n-1}}(\theta | y_{1:T_{n-1}}).
 \end{equation}
 into the score gradient estimator (\ref{scoreDeriv}) or the reparameterised gradient estimator (\ref{rpDeriv}). The updating score estimator is given by
 \begin{align}
-\widehat{\frac{\partial\mathcal{L}(q, \lambda_{n})}{\partial \lambda_{n}}}_{USC} &= \sum_{j = 1}^M \frac{\partial \log(q_{\lambda_{n}}(\theta_{j} | x_{1:T_{n}}))}{\partial \lambda_{n}} \nonumber \\
-&\times \left(\log(q_{\lambda_{n-1}}(\theta_{j} | x_{1:T_{n-1}})p(x_{T_{n-1}+1:T_{n}} | x_{1:T_{n-1}}, \theta)) - \log(q_{\lambda_{n}}(\theta_{j} | x_{1:T_{n}})) \right) \label{scoreUpdate}
+\widehat{\frac{\partial\mathcal{L}(q, \lambda_{n})}{\partial \lambda_{n}}}_{USC} &= \sum_{j = 1}^M \frac{\partial \log(q_{\lambda_{n}}(\theta_{j} | y_{1:T_{n}}))}{\partial \lambda_{n}} \nonumber \\
+&\times \left(\log(q_{\lambda_{n-1}}(\theta_{j} | y_{1:T_{n-1}})p(y_{T_{n-1}+1:T_{n}} | y_{1:T_{n-1}}, \theta)) - \log(q_{\lambda_{n}}(\theta_{j} | y_{1:T_{n}})) \right) \label{scoreUpdate}
 \end{align}
-where $\theta_{j} \sim q_{\lambda_{n}}(\theta | x_{1:T_{n}})$. Similarly, the updating reparameterised estimator is given by
+where $\theta_{j} \sim q_{\lambda_{n}}(\theta | y_{1:T_{n}})$. Similarly, the updating reparameterised estimator is given by
 \begin{align}
-\widehat{\frac{\partial\mathcal{L}(q, \lambda_{n})}{\partial \lambda_{n}}}_{URP} &= \sum_{j = 1}^M \frac{\partial f(\lambda_{n}, \epsilon_j)}{\partial \lambda_{n}} \frac{\partial \log(q_{\lambda_{n-1}}(\theta |x_{1:T_{n-1}})p(x_{T_{n-1}+1:T_{n}} | x_{1:T_{n-1}}, \theta))}{\partial \theta} \bigg\rvert_{\theta = f(\lambda_{n}, \epsilon_j)} \nonumber \\
+\widehat{\frac{\partial\mathcal{L}(q, \lambda_{n})}{\partial \lambda_{n}}}_{URP} &= \sum_{j = 1}^M \frac{\partial f(\lambda_{n}, \epsilon_j)}{\partial \lambda_{n}} \frac{\partial \log(q_{\lambda_{n-1}}(\theta |y_{1:T_{n-1}})p(y_{T_{n-1}+1:T_{n}} | y_{1:T_{n-1}}, \theta))}{\partial \theta} \bigg\rvert_{\theta = f(\lambda_{n}, \epsilon_j)} \nonumber \\
 & + \frac{\partial \log(J(\lambda_{n}, \epsilon_j))}{\partial \lambda_{n}}, \label{rpUpdate}
 \end{align}
 where $\epsilon_j \sim r(\epsilon)$. 
 \fi
 
-Minimising the KL divergence to (\ref{pHatPosterior}) is not equivalent to minimising the KL divergence to the true posterior (\ref{updatePost}) unless $q_{\lambda_{n-1}}(\theta |  x_{1:T_{n-1}}) = p(\theta |  x_{1:T_{n-1}})$ almost everywhere, which requires the true posterior to be a member of the family $q$. Thus UVB introduces an additional approximation error to Variational Bayes inference which depends largely on the ability of the family $q$ chosen to adequately approximate the true posterior distribution.
+Minimising the KL divergence to (\ref{pHatPosterior}) is not equivalent to minimising the KL divergence to the true posterior (\ref{updatePost}) unless $q_{\lambda_{n}}(\theta |  y_{1:T_{n}}) = p(\theta |  y_{1:T_{n}})$ almost everywhere, which requires the true posterior to be a member of the family $q$. Thus UVB introduces an additional approximation error to Variational Bayes inference which depends largely on the ability of the family $q$ chosen to adequately approximate the true posterior distribution.
 
-If the updates are equally spaced such that $T_n - T_{n-1} = H$ for all $n$, then the computational complexity of UVB as $n$ increases as $O(H)$. In constrast, the computational complexity of standard VB is $O(T_{n})$ as is requires evaluation of the complete data likelihood, $p(x_{1:T_{n}} | \theta)$, at each $T_{n}$. A summary of the UVB algorithm is given by Algorithm \ref{alg:UVB}.
+If the updates are equally spaced such that $T_{n+1} - T_{n} = H$ for all $n$, then the computational complexity of UVB as $n$ increases is $O(H)$. In constrast, the computational complexity of standard VB is $O(T_{n})$ as is requires evaluation of the complete data likelihood, $p(y_{1:T_{n}} | \theta)$, at each $T_{n}$. Choosing the form of the approximating distribution to match the prior distribution allows UVB to be easily implemented, as the prior hyper-parameters are simply replaced with the optimised $\lambda_n$ values after each update.
+
+A summary of the UVB algorithm is given by Algorithm \ref{alg:UVB}.
 
 \begin{algorithm}[H]
  \SetKwInOut{Input}{Input}
  \Input{Prior, Likelihood.}
  \KwResult{Approximating distribution at $T_N$.}
- Observe $x_{1:T_1}$\;
- Use (\ref{scoreDeriv}) or (\ref{rpDeriv}) to construct $q_{\lambda_1}(\theta | x_{1:T_1})$\;
+ Observe $y_{1:T_1}$\;
+ Use (\ref{scoreDeriv}) or (\ref{rpDeriv}) to construct $q_{\lambda_1}(\theta | y_{1:T_1})$\;
  \For{$n \mbox{ in } 2, \dots, N$}{
-   Observe $x_{T_{n-1}+1:T_n}$\;
-   Use $q_{\lambda_{n-1}}(\theta | x_{1:T_{n-1}})$ and (\ref{scoreUpdate}) or (\ref{rpUpdate}) to construct $q_{\lambda_n}(\theta | x_{1:T_n})$.
+   Observe $y_{T_{n-1}+1:T_n}$\;
+   Use $q_{\lambda_{n-1}}(\theta | y_{1:T_{n-1}})$ and (\ref{scoreUpdate}) or (\ref{rpUpdate}) to construct $q_{\lambda_n}(\theta | y_{1:T_n})$.
   }
  \caption{Updating Variational Bayes}
   \label{alg:UVB}
@@ -301,47 +332,42 @@ If the updates are equally spaced such that $T_n - T_{n-1} = H$ for all $n$, the
 
 \section{Importance Sampling} \label{sec:IS}
 
-Note: This is similar to the ideas presented in McGrory, Pettitt, Titterington, ALston and Kelly 2016. They use meanfield VB and refit the approximation from scratch each iteration. They also use a metropolis hastings step to draw new theta particles when the importance sampling weights decay too much.
-
-At each time point $T_n$ we have an approximation to the posterior, $q_{\lambda_n}(\theta | x_{1:T_n})$. The true posterior is known up to proportionality, $p(\theta | x_{1:T_n}) \propto p(x_{1:T_n} | \theta)p(\theta)$. 
-\\
-
-Using an importance sampler to reweight samples $\theta^{(1)}, \dots, \theta^{(M)}$ from $q_{\lambda_n}(\theta | x_{1:T_n})$ to form 
+The increasing approximation error introduced by UVB could be offset by an importance sampling correction at each $T_n$. Importance sampling allows an expectation with respect to the true posterior $p(\theta | y_{1:T_n})$ to be evaluated using samples drawn from some proposal distribution, such as the VB $q_{\lambda_n}(\theta | y_{1:T_n})$, See (citation) for an overview. The importance sampler reweights particles $\theta^{(1)}, \dots, \theta^{(M)}$ from $q_{\lambda_n}(\theta | y_{1:T_n})$ to form 
 \begin{equation}
 \label{IS:Approx}
-p^*(\theta | x_{1:T_n}) = \sum_{i=1}^M w^{(i)}_{T_n} \delta(\theta^{(i)})
+p^*(\theta | y_{1:T_n}) = \sum_{i=1}^M w^{(i)}_{T_n} \delta(\theta^{(i)})
 \end{equation}
-seems like an easy way to correct for the VB approximation error, with a computational cost that is somewhere in-between VB and MCMC. The weights are given by
+with weights given by
 \begin{align}
-\hat{w}^{(i)}_{T_n} &= \frac{p(\theta^{(i)}, x_{1:T_n})}{q(\theta^{(i)} | x_{1:T_n})} \label{IS:Weights} \\
+\hat{w}^{(i)}_{T_n} &= \frac{p(\theta^{(i)}, y_{1:T_n})}{q(\theta^{(i)} | y_{1:T_n})} \label{IS:Weights} \\
 w^{(i)}_{T_n} &= \frac{\hat{w}^{(i)}_{T_n}}{\sum_{i=1}^M \hat{w}^{(i)}_{T_n}} \label{IS:WeightsNorm}
 \end{align}
 \\
+Setting $M$ to be a large value can make the approximation error arbitarily small, so an imporance sampled VB approximation (VB-IS) or UVB approximation (UVB-IS) allows the user to trade compuational time with approximation accuracy.
 
-Is is easy to use this distribution for forecast purposes, though it cannot be used to construct the next VB approximation.
-
-We can also use the importance sampler to update the posterior approximation in an SMC fashion while the VB approximation updates. Let $T_{n+1} = T_{n} + H$ for some $H > 0$, so there are $H-1$ observations in the gap between VB updates.
-\\
-
-Given the time $T_n$ importance sampler approximation, $p^*(\theta | x_{1:T_n})$, an update to $p^*(\theta | x_{1:T_n+h})$ for each $h = 1, \dots, H-1$ can be obtained by updating the previous unnormalised particle weights $\hat{w}_{T_n}$,
+Many values of interest can be phrased as an expectation with respect to the posterior and evaluated with $p^*(\theta | y_{1:T_n})$, such as the forecast distribution
 \begin{equation}
-\label{IS:ApproxUpdate}
-p^*(\theta | x_{1:T_n+h}) = \sum_{i=1}^M w^{(i)}_{T_n+h} \delta(\theta^{(i)})
+p(y_{T_n+h} | y_{1:T_n}) =  E_{p(\theta | y_{1:T_n)}}\left[p(y_{T_n+h} | \theta, y_{1:T_n})\right] \approx \sum_{i=1}^M p(y_{T_n+h} | \theta^{(i)}, y_{1:T_n}) w^{(i)}_{T_n}
 \end{equation}
-where
+
+If intermediate values $y_{T_n+h}, h = 1, 2, \dots, T_{n+1} - T_{n} - 1$, are observed, the importance sample approximation can be updated in a Sequential Monte Carlo (SMC, citations) fashion without the need of a new VB approximation by updating the weights via
 \begin{align}
-\hat{w}^{(i)}_{T_n+h} &= \frac{p(\theta^{(i)}, x_{1:T_n+h})}{q(\theta^{(i)} | x_{1:T_n})} \nonumber \\
-&= \frac{p(x_{T_n+h} | \theta^{(i)})p(\theta^{(i)}, x_{1:T_n+h-1)}}{q(\theta^{(i)} | x_{1:T_n})} \nonumber \\
-&= p(x_{T_n+h} | \theta^{(i)}) \hat{w}^{(i)}_{T_n+h-1}, \label{IS:UpdateWeights}
+\hat{w}^{(i)}_{T_n+h} &= \frac{p(\theta^{(i)}, y_{1:T_n+h})}{q(\theta^{(i)} | y_{1:T_n})} \nonumber \\
+&= \frac{p(y_{T_n+h} | \theta^{(i)})p(\theta^{(i)}, y_{1:T_n+h-1)}}{q(\theta^{(i)} | y_{1:T_n})} \nonumber \\
+&= p(y_{T_n+h} | \theta^{(i)}) \hat{w}^{(i)}_{T_n+h-1}, \label{IS:UpdateWeights}
 \end{align}
 and
 \begin{equation}
-\label{IS:UpdateWeightsNorma}
+\label{IS:UpdateWeightsNorm}
 w^{(i)}_{T_n+h} = \frac{\hat{w}^{(i)}_{T_n+h}}{\sum_{i=1}^M \hat{w}^{(i)}_{T_n+h}}.
 \end{equation}
+to yield
+\begin{equation}
+\label{IS:ApproxUpdate}
+p^*(\theta | y_{1:T_n+h}) = \sum_{i=1}^M w^{(i)}_{T_n+h} \delta(\theta^{(i)}).
+\end{equation}
 
-In this way, UVB with an importance sampler can be seen as an SMC algorithm, where we use the VB approximation as a proposal distribution, and propogate these particles forward in time. When a UVB update has finished optimisation, a fresh set of particles $\theta$ can be sampled to avoid degeneracy in the weights. Each time we sample from $q$ we are required to re-estimate weights from (\ref{IS:Weights}) and (\ref{IS:WeightsNorm}) using the entire data set $x_{1:T_n}$ at each $n$.
-\\
+Repeated SMC updates often exhibit weight decay, where the values of each $w^{(i)}_{T_n+h}$ except one approaches zero, reducing the effective sample size of the approximation. This can be alleviated in the UVB setting by sampling a fresh set of particles from $q_{\lambda_n}(\theta | y_{1:T_n})$ when the distribution becomes available.
 
 \section{Approximation Error}
 
@@ -355,12 +381,12 @@ We consider three approaches to posterior inference:
 As the number of iterations increases, samples generated by MCMC converge to serially correlated samples from the true posterior distribution and we will consider MCMC as exact inference for the purpose of measuring VB and UVB approximation error in this paper.
 \\
 
-In this section we discuss several choices loss functions to measure this error. In the general case, the distance between the posterior distribution $p(\theta | x_{1:T_n})$ and approximation $q_{\lambda_n}(\theta |  x_{1:T_n})$ is of interest, however there may be cases where a model specific loss is of interest: the accuracy of an application of $\theta$ is more relevant than the accuracy of the posterior approximation itself. 
+In this section we discuss several choices loss functions to measure this error. In the general case, the distance between the posterior distribution $p(\theta | y_{1:T_n})$ and approximation $q_{\lambda_n}(\theta |  y_{1:T_n})$ is of interest, however there may be cases where a model specific loss is of interest: the accuracy of an application of $\theta$ is more relevant than the accuracy of the posterior approximation itself. 
 
 
 \subsection{Posterior Distance}
 
-Each VB algorithm results in a density for $q(\theta | x)$, however we only have access to the true posterior $p(\theta | x_{1:T_n})$ through a set of MCMC samples. To measure the distance between the posterior and its variational approximation we consider the empirical first order Wasserstein distance, $W_1$, between thinned MCMC samples $\theta^{(i)}_p, i = 1, \dots, N$ and independently generated samples $\theta^{(j)}_q, j = 1, \dots, N$ from $q_{\lambda_n}(\theta |  x_{1:T_n})$.
+Each VB algorithm results in a density for $q(\theta | x)$, however we only have access to the true posterior $p(\theta | y_{1:T_n})$ through a set of MCMC samples. To measure the distance between the posterior and its variational approximation we consider the empirical first order Wasserstein distance, $W_1$, between thinned MCMC samples $\theta^{(i)}_p, i = 1, \dots, N$ and independently generated samples $\theta^{(j)}_q, j = 1, \dots, N$ from $q_{\lambda_n}(\theta |  y_{1:T_n})$.
 \\
 
 The Wasserstein distance is given by
@@ -375,11 +401,11 @@ This is also known as the Earthmover distance and is calculated with the R packa
 
 \subsection{Predictive Model Loss}
 
-For a predictive model, where the aim is to predict the value of $x_{T_n + h}$ given observations of $x_{1:T_n}$, we consider loss functions based on the accuracy of the predictive distribution.
+For a predictive model, where the aim is to predict the value of $y_{T_n + h}$ given observations of $y_{1:T_n}$, we consider loss functions based on the accuracy of the predictive distribution.
 
 For example, consider the AR(p) model given by
 \begin{equation}
-x_t = \mu + \sum_{s=1}^p \phi_s (x_{t-s} - \mu) + e_t,
+y_t = \mu + \sum_{s=1}^p \phi_s (y_{t-s} - \mu) + e_t,
 \end{equation}
 where $e_t \sim N(0, \sigma^2)$, with the parameter vector
 \begin{equation}
@@ -387,15 +413,15 @@ where $e_t \sim N(0, \sigma^2)$, with the parameter vector
 \end{equation}
 \\
 
-Given the posterior distribution $p(\theta | x_{1:T_n})$, the predictive distribution associated with $x_{T_n +h}$ is given by
+Given the posterior distribution $p(\theta | y_{1:T_n})$, the predictive distribution associated with $y_{T_n +h}$ is given by
 \begin{equation}
-\label{forecastDist}
-p(x_{T_n + h} | x_{1:T_n}) = \int_{\theta} p(x_{T_n + h} | x_{1:T_n}, \theta)p(\theta | x_{1:T_n})d\theta.
+\label{forecastDistIntro}
+p(y_{T_n + h} | y_{1:T_n}) = \int_{\theta} p(y_{T_n + h} | y_{1:T_n}, \theta)p(\theta | y_{1:T_n})d\theta.
 \end{equation}
 The loss function associated with this value is given by $L(n, h)$ and is measured by the predictive logscore,
 \begin{equation}
-\label{loss:logscore}
-L(n, h) = \log(p(x_{T_n + h} | x_{1:T_n}))
+\label{loss:logscoreIntro}
+L(n, h) = \log(p(y_{T_n + h} | y_{1:T_n}))
 \end{equation}
 
 \subsection{Classification Model Loss}
@@ -403,52 +429,52 @@ L(n, h) = \log(p(x_{T_n + h} | x_{1:T_n}))
 Many models aim to associate a class label $k_i = 1 , \dots, K$ to observations of each unit $i$. Consider the problem where $T_n$ observations are recorded for each of $M$ units from a mixture of normal distributions,
 \begin{equation}
 \label{mixNormalDGP}
-x_{i, t} \sim \sum_{j=1}^K \pi_{j} N(\mu_j, \sigma^2_{j}).
+y_{i, t} \sim \sum_{j=1}^K \pi_{j} N(\mu_j, \sigma^2_{j}).
 \end{equation}
-At each time period we aim to infer the posterior distribution of each mixture components parameters $\{\mu_j, \sigma_j, \pi_j | k = 1, \dots, K\}$ and predict the class labels of $x_{i, 1:T_n}$. Approximation error on the mixture components is measured by the Wasserstein Distance, while class label loss function is proportion of correct classifications.
+At each time period we aim to infer the posterior distribution of each mixture components parameters $\{\mu_j, \sigma_j, \pi_j | k = 1, \dots, K\}$ and predict the class labels of $y_{i, 1:T_n}$. Approximation error on the mixture components is measured by the Wasserstein Distance, while class label loss function is proportion of correct classifications.
 
 \subsection{State-Space Model Loss}
 
 Many models of interest can be expressed as a dynamic state-space, with
 \begin{align}
-x_t &\sim p(x_t | z_{t}, \theta) \label{measure} \\
-z_t &\sim p(z_t | z_{t-1}, \theta) \label{transition} ,
+y_t &\sim p(y_t | x_{t}, \theta) \label{measure} \\
+x_t &\sim p(x_t | x_{t-1}, \theta) \label{transition} ,
 \end{align}
-where inference of $p(z_t, \theta | x_{1:t})$ is desired at each $t$. This problem is known as \textit{Bayesian filtering}, where the posterior distribution is recursively updated from $p(z_{t-1}, \theta | x_{1:t-1})$ to $p(z_t, \theta | x_{1:t})$ by
+where inference of $p(x_t, \theta | y_{1:t})$ is desired at each $t$. This problem is known as \textit{Bayesian filtering}, where the posterior distribution is recursively updated from $p(x_{t-1}, \theta | y_{1:t-1})$ to $p(x_t, \theta | y_{1:t})$ by
 \begin{align}
-p(z_t, \theta | x_{1:t-1}) &= \int p(z_t | z_{t-1}, \theta) p(z_{t-1}, \theta | x_{1:t-1})dz_{t-1} \label{marginalise} \\
-p(z_t, \theta | x_{1:t}) &\propto p(x_t | z_t, \theta) p(z_t, \theta | x_{1:t-1}) \label{update}
+p(x_t, \theta | y_{1:t-1}) &= \int p(x_t | x_{t-1}, \theta) p(x_{t-1}, \theta | y_{1:t-1})dx_{t-1} \label{marginalise} \\
+p(x_t, \theta | y_{1:t}) &\propto p(y_t | x_t, \theta) p(x_t, \theta | y_{1:t-1}) \label{update}
 \end{align}
-for a given prior distribution $p(z_0, \theta)$. 
+for a given prior distribution $p(x_0, \theta)$. 
 \\
 
-For a limited class of models the marginalisation over $z_{t-1}$ in (\ref{marginalise}) and posterior in (\ref{update}) are both analytically tractable for all $t$, such as when both (\ref{measure}) and (\ref{transition}) are linear and Gaussian. Typically this is not the case and an approximation is required, such as the extended Kalman filter \citep{Anderson1979}, the unscented Kalman filter \citep{Wan2000}, or particle filters \citet{Arulampalam2002}. Variational Particle Filtering is introduced by \citet{Smidl2008}, in cases where a subset $z_{1, t}$ of $z_t = \{z_{1, t}, z_{2, t}\}$ can be analytically marginalised, and does not discuss simultaneous inference of the static variables $\theta$ which is allowed with UVB below.
+For a limited class of models the marginalisation over $x_{t-1}$ in (\ref{marginalise}) and posterior in (\ref{update}) are both analytically tractable for all $t$, such as when both (\ref{measure}) and (\ref{transition}) are linear and Gaussian. Typically this is not the case and an approximation is required, such as the extended Kalman filter \citep{Anderson1979}, the unscented Kalman filter \citep{Wan2000}, or particle filters \citet{Arulampalam2002}. Variational Particle Filtering is introduced by \citet{Smidl2008}, in cases where a subset $x_{1, t}$ of $x_t = \{x_{1, t}, x_{2, t}\}$ can be analytically marginalised, and does not discuss simultaneous inference of the static variables $\theta$ which is allowed with UVB below.
 \\
 
-Replacing $p(z_{t-1}, \theta | x_{1:t-1})$ with the Variational Bayes approximation $q(z_{t-1} | x_{1:t-1}, \theta)q(\theta|x_{1:t-1})$ we obtain 
+Replacing $p(x_{t-1}, \theta | y_{1:t-1})$ with the Variational Bayes approximation $q(x_{t-1} | y_{1:t-1}, \theta)q(\theta|y_{1:t-1})$ we obtain 
 \begin{align}
-\hat{p}(z_t, \theta | x_{1:t-1}) &= q(\theta | x_{1:t-1}) \int p(z_t | z_{t-1}, \theta) q(z_{t-1} | x_{1:t-1}, \theta)dz_{t-1} \label{marginaliseHat} \\
-\hat{p}(z_t, \theta | x_{1:t}) &\propto p(x_t | z_t, \theta)\hat{p}(z_t, \theta | x_{1:t-1}). \label{updateHat}
+\hat{p}(x_t, \theta | y_{1:t-1}) &= q(\theta | y_{1:t-1}) \int p(x_t | x_{t-1}, \theta) q(x_{t-1} | y_{1:t-1}, \theta)dx_{t-1} \label{marginaliseHat} \\
+\hat{p}(x_t, \theta | y_{1:t}) &\propto p(y_t | x_t, \theta)\hat{p}(x_t, \theta | y_{1:t-1}). \label{updateHat}
 \end{align}
 
-If (\ref{transition}) is linear and Gaussian, and  $q(z_{t-1} | x_{1:t-1}, \theta)$ is Gaussian, (\ref{marginaliseHat}) can be marginalised analytically, allowing the Variational Bayes approximation at time $t$ as
+If (\ref{transition}) is linear and Gaussian, and  $q(x_{t-1} | y_{1:t-1}, \theta)$ is Gaussian, (\ref{marginaliseHat}) can be marginalised analytically, allowing the Variational Bayes approximation at time $t$ as
 \begin{equation}
 \label{UVBfilter}
-\hat{p}(z_t, \theta | x_{1:t}) \approx q(z_{t} | x_{1:t}, \theta)q(\theta|x_{1:t}).
+\hat{p}(x_t, \theta | y_{1:t}) \approx q(x_{t} | y_{1:t}, \theta)q(\theta|y_{1:t}).
 \end{equation}
 \\
 
-Let $a_{t, \alpha}$ and $b_{t, \alpha}$ be the lower and upper bounds of the $\alpha\%$ highest probability interval for $z_t$, that is
+Let $a_{t, \alpha}$ and $b_{t, \alpha}$ be the lower and upper bounds of the $\alpha\%$ highest probability interval for $x_t$, that is
 \begin{equation}
 \label{HPI}
-\{a_{t, \alpha}, b_{t, \alpha}\} = \arg \underset{\{a, b\}}{\min}\mbox{ } b - a, \mbox{ where } \int_a^b p(z_t | z_{1:t-1}, \theta, x_{1:t})dz_t = \alpha.
+\{a_{t, \alpha}, b_{t, \alpha}\} = \arg \underset{\{a, b\}}{\min}\mbox{ } b - a, \mbox{ where } \int_a^b p(x_t | x_{1:t-1}, \theta, y_{1:t})dx_t = \alpha.
 \end{equation}
 \\
 
 We define the loss function as the $\alpha\%$ latent state coverage rate, 
 \begin{equation}
 \label{coverage}
-L(n, \alpha) = \frac{\sum_{t=1}^{T_n} I(a_{t, x} < z_t < b_{t, x})}{T_n}
+L(n, \alpha) = \frac{\sum_{t=1}^{T_n} I(a_{t, \alpha} < x_t < b_{t, \alpha})}{T_n}
 \end{equation}
 where $I(\cdot)$ is the indicator function, which equals one if the argument is true and zero otherwise.
 
@@ -459,7 +485,7 @@ where $I(\cdot)$ is the indicator function, which equals one if the argument is 
 We simulate $N = 500$ datasets of length $300$ from the following AR3 model,
 \begin{equation}
 \label{AR3}
-x_t = \mu + \phi_1 (x_{t-1} - \mu) + \phi_2 (x_{t-2} - \mu) + \phi_3 (x_{t-3} - \mu) + e_t
+y_t = \mu + \phi_1 (y_{t-1} - \mu) + \phi_2 (y_{t-2} - \mu) + \phi_3 (y_{t-3} - \mu) + e_t
 \end{equation}
 where $e_t \sim N(0, \sigma^2)$. 
 The parameters are $\theta = \{\log(\sigma^2), \mu, \phi_1, \phi_2, \phi_3 \}$, with the prior
@@ -472,29 +498,32 @@ where $I$ denotes the identity matrix.
 In each simulation, $\mu$ and each $\phi$ are drawn from an $N(0, 1)$ distribution, accepting only draws where each $\phi$ lies in the AR3 stationary region. $\sigma^{-2}$ is simulated from a $G(5, 5)$ distribution.
 \\
 
-At each time $t = 50, 51, \dots, 200$, the MCMC posterior distribution $p(\theta | x_{1:t})$ is simulated by 15000 draws from a Random Walk Metropolis Hastings MCMC algoritihm, discarding the first 10000 as a burn in period.
+At each time $t = 100, 101, \dots, 300$, the MCMC posterior distribution $p(\theta | y_{1:t})$ is simulated by 15000 draws from a Random Walk Metropolis Hastings MCMC algoritihm, discarding the first 10000 as a burn in period.
 \\
 
-VB and UVB approximations, $q_{VB}(\theta | x_{1:T_n})$ and $q_{UVB}(\theta | x_{1:T_n})$ respectively, are fit at each time $T_n = 75 + 25n$ for $n = 1, 2, \dots 9$. These are used as importance sample proposal distributions to construct further approximating distributions $p^*_{VB}(\theta | x_{1:t})$ and $p^*_{UVB}(\theta | x_{1:t})$ for each $t = 50, 51, \dots, 200$ following Section \ref{sec:IS}. In each case, the distributional family for $q$ is chosen to be a $K = 1, 2$, or $3$ component mixture of multivariate normal distributions.
+VB and UVB approximations, $q_{VB}(\theta | y_{1:T_n})$ and $q_{UVB}(\theta | y_{1:T_n})$ respectively, are fit at each time $T_n = 75 + 25n$ for $n = 1, 2, \dots 9$. These are used as importance sample proposal distributions to construct further approximating distributions $p^*_{VB}(\theta | y_{1:t})$ and $p^*_{UVB}(\theta | y_{1:t})$ for each $t = 100, 101, \dots, 300$ following Section \ref{sec:IS}. In each case, the distributional family for $q$ is chosen to be a $K = 1, 2$, or $3$ component mixture of multivariate normal distributions.
 \\
 
-Given the posterior, or its approximation, the forecast distribution for $x_{T_n+h}$ is given by
+Given the posterior, or its approximation, the forecast distribution for $y_{T_n+h}$ is given by
 \begin{equation}
 \label{forecastDist}
-p(x_{T_n + h} | x_{1:T_n}) = \int_{\theta} p(x_{T_n + h} | x_{1:T_n}, \theta)p(\theta | x_{1:T_n})d\theta,
+p(y_{T_n + h} | y_{1:T_n}) = \int_{\theta} p(y_{T_n + h} | y_{1:T_n}, \theta)p(\theta | y_{1:T_n})d\theta,
 \end{equation}
 which may be evaluated by $M$ samples from the posterior,
 \begin{equation}
-\label{forecastDist}
-\hat{p}(x_{T_n + h} | x_{1:T_n}) \approx \frac{1}{M} \sum_{m=1}^M  p(x_{T_n + h} | x_{1:T_n}, \theta^{(m)}).
+\label{forecastDistApprox}
+\hat{p}(y_{T_n + h} | y_{1:T_n}) \approx \frac{1}{M} \sum_{m=1}^M  p(y_{T_n + h} | y_{1:T_n}, \theta^{(m)}).
 \end{equation}
 The loss function associated with this value is given by $L(n, h)$ and is measured by the predictive logscore,
 \begin{equation}
 \label{loss:logscore}
-L(n, h) = \log(p(x_{T_n + h} | x_{1:T_n})).
+L(n, h) = \log(p(y_{T_n + h} | y_{1:T_n})).
 \end{equation}
 
-One step ahead forecast distributions are made for each inferential method: MCMC and both VB and UVB with and without importance sampling, and approximations are evaluated with the logscore relative to the exact inference logscore provided by MCMC. 
+One step ahead forecast distributions are made for each inferential method: MCMC and both VB and UVB with and without importance sampling, and approximations are evaluated with the logscore relative to the exact inference logscore provided by MCMC. The results are displyed in Figure (\ref{fig:AR3Timing}), where the left panel displayed the mean reduction in logscore for VB, UVB, VB-IS and UVB-IS compared to MCMC inference at each time point across the 500 simulations. While each approximation has a lower logscore compared to exact inference, each approximation is comparable to the others.
+\\
+
+The right panel displayed the mean runtime for a singular VB or VB-IS fit, compared to the mean runtime for $n$ UVB and UVB-IS updated with a shaded 50\% interval. While UVB at any time point after $T_1$ (100 observationsA) has an increased computational time compared to a single VB fit, it benefits by being able to provide an approximating distribution from $T_1$ onwards, while VB must wait until time $T_n$ to begin optimisation. There is no significant difference between $K = 1, 2 $ or $3$.   
 
 \begin{figure}%
     \centering
@@ -510,7 +539,7 @@ One step ahead forecast distributions are made for each inferential method: MCMC
 We consider the two component mixture normal model for $i = 1, \dots N$ and $t = 1, \dots, T_n$, augmented with a set of auxiliary variables $k_i$ such that
 \begin{equation}
 \label{mixNormalDGP2}
-x_{i, t} | k_i = j \sim  N(\mu_j, \sigma^2_{j}).
+y_{i, t} | k_i = j \sim  N(\mu_j, \sigma^2_{j}).
 \end{equation}
 with 
 \begin{equation}
@@ -521,48 +550,51 @@ k_i | \pi \sim Bin(1, \pi).
 Collecting $\theta = \{\log(\sigma^2_1), \log(\sigma^2_2), \mu_1, \mu_2 \}$, we consider the priors
 \begin{align}
 \theta \sim N(\boldsymbol{0}, 10 I), \\
-\pi_1 \sim Beta(\alpha, \beta). \label{piPrior}
+\pi_1 \sim Beta(\alpha, \beta). \label{piPriorMix}
 \end{align}
 
-Note that (\ref{kPrior}) and (\ref{piPrior}) imply that 
+Note that (\ref{kPrior}) and (\ref{piPriorMix}) imply that 
 \begin{equation}
-\label{kMarginal}
+\label{kMarginalMix}
 p(k_i = j) = \frac{\mathcal{B}(j + \alpha, \beta - j + 1)}{\mathcal{B}(\alpha, \beta)}
 \end{equation}
 where $\mathcal{B}(\cdot, \cdot)$ denotes the Beta function.
 \\
 
-Denoting $x_{i, 1:T_n} = \{x_{i, t} | t = 1, \dots, T_n\}$ and $x_{1:N, 1:T_n} = \{x_{i, 1:T_n} | i = 1, \dots N \}$, the posterior distribution can then be marginalised over the values of each $k_i$,
+Denoting $y_{i, 1:T_n} = \{y_{i, t} | t = 1, \dots, T_n\}$ and $y_{1:N, 1:T_n} = \{y_{i, 1:T_n} | i = 1, \dots N \}$, the posterior distribution can then be marginalised over the values of each $k_i$,
 \begin{equation}
 \label{mixNormalMarginal}
-p(\theta | x_{1:N, 1:T_n}) \propto p(\theta) \prod_{i=1}^N \left( \sum_{j=1}^2 p(x_{i, 1:T_n} | \theta, k_i = j) p(k_i = j) \right)
+p(\theta | y_{1:N, 1:T_n}) \propto p(\theta) \prod_{i=1}^N \left( \sum_{j=1}^2 p(y_{i, 1:T_n} | \theta, k_i = j) p(k_i = j) \right)
 \end{equation}
-We approximate this by employing variational approximations $q_{\lambda}(\theta | x_{1:N, 1:T_n})$ as either a $K = 1, 2,$ or $3$ component mixture of multivariate normal distributions. 
+We approximate this by employing variational approximations $q_{\lambda}(\theta | y_{1:N, 1:T_n})$ as either a $K = 1, 2,$ or $3$ component mixture of multivariate normal distributions. 
 \\
 
 This posterior approximation can be updated if at each time $T_{n+1}$ the marginalisation in (\ref{mixNormalMarginal}) can be applied as
 \begin{equation}
 \label{mixNormalUpdate}
-\hat{p}(\theta | x_{1:T_{n+1}}) \propto q_{\lambda_{n}}(\theta | x_{i, 1:T_{n}}) \prod_{i=1}^N \left( \sum_{j=1}^2 p(x_{i, T_n+1:T_{n+1}} | \theta, k_i = j) p(k_i = j | x_{1:T_n}) \right)
+\hat{p}(\theta | y_{1:T_{n+1}}) \propto q_{\lambda_{n}}(\theta | y_{i, 1:T_{n}}) \prod_{i=1}^N \left( \sum_{j=1}^2 p(y_{i, T_n+1:T_{n+1}} | \theta, k_i = j) p(k_i = j | y_{1:T_n}) \right)
 \end{equation}
-This requires the marginal posterior distributions $p(k_i | x_{i, 1:T_{n}})$, which we approximate with
+This requires the marginal posterior distributions $p(k_i | y_{i, 1:T_{n}})$, which we approximate with
 \begin{align}
-\hat{p}(k_i | x_{i, 1:T_{n}}) &= \int_{\theta} p(k_i | \theta, x_{i, 1:T_{n}})q_{\lambda_{n}}(\theta | x_{i, 1:T_{n}}) d\theta \nonumber \\
-&\propto \int_{\theta} p(x_{i, 1:T_n} | \theta, k_i) p(k_i) q_{\lambda_{n}}(\theta | x_{i, 1:T_{n}}) d\theta \nonumber \\
-&\approx \frac{1}{M} \sum_{m=1}^M p(x_{i, 1:T_n} | \theta^{(m)} , k_i) p(k_i). \label{pkHat}
+\hat{p}(k_i | y_{i, 1:T_{n}}) &= \int_{\theta} p(k_i | \theta, y_{i, 1:T_{n}})q_{\lambda_{n}}(\theta | y_{i, 1:T_{n}}) d\theta \nonumber \\
+&\propto \int_{\theta} p(y_{i, 1:T_n} | \theta, k_i) p(k_i) q_{\lambda_{n}}(\theta | y_{i, 1:T_{n}}) d\theta \nonumber \\
+&\approx \frac{1}{M} \sum_{m=1}^M p(y_{i, 1:T_n} | \theta^{(m)} , k_i) p(k_i). \label{pkHat}
 \end{align}
-where $\theta^{(m)} \sim q_{\lambda_{n}}(\theta | x_{i, 1:T_{n}})$ for $m = 1, 2, \dots, M$. This step happens once per VB update, so use of the entire dataset in (\ref{pkHat}) does not incur a large computational cost.
+where $\theta^{(m)} \sim q_{\lambda_{n}}(\theta | y_{i, 1:T_{n}})$ for $m = 1, 2, \dots, M$. This step happens once per VB update, so use of the entire dataset in (\ref{pkHat}) does not incur a large computational cost.
 \\
 
 This distribution is also used to predict classes for each unit as
 \begin{equation}
-\hat{k}_i = \arg \underset{j}{\max}\mbox{ } p(k_i = j | x_{i, 1:T_n}).
+\hat{k}_i = \arg \underset{j}{\max}\mbox{ } p(k_i = j | y_{i, 1:T_n}).
 \end{equation}
 
 The accuracy of each inferential method in this model is given by the proportion of correct class predictions at each $T_n$.
 \\
 
-We create 100 datasets with $N = 50$ and $T = 100$, and infer the posterior distribution $p(\theta, k_1, \dots, k_N | x_{1:N, 1:T_n})$ for $T_n = 10n$ for $n = 1, 2, \dots, 10$ using each inferential method: MCMC, and both VB and UVB with and without importance sampling. Data is simulated by drawing each $\mu$ from an $N(0, 0.25)$ distribution and each $\sigma^2$ from a $U(1, 2)$ distribution. Units are randomly allocated to each group with $50\%$ probability.
+We create 100 datasets with $N = 50$ units of length $T = 100$, and infer the posterior distribution $p(\theta, k_1, \dots, k_N | y_{1:N, 1:T_n})$ for $T_n = 10n$ for $n = 1, 2, \dots, 10$ using each inferential method: MCMC, and both VB and UVB with and without importance sampling. Data is simulated by drawing each $\mu$ from an $N(0, 0.25)$ distribution and each $\sigma^2$ from a $U(1, 2)$ distribution. Units are randomly allocated to each group with $50\%$ probability. 
+\\
+
+The results are displayed in Figure (\ref{fig:mixnormResults}), where the large amount of data clearly benefits UVB accuracy relative to exact inference in the left panel, and the mean runtime of $n$ updates relative to a single VB fit in the right panel. The value of $K$ does not have a significant impact, and importance sampling does not improve results.
 
 \begin{figure}%
     \centering
@@ -575,12 +607,16 @@ We create 100 datasets with $N = 50$ and $T = 100$, and infer the posterior dist
 
 \section{Smart Meter Forecasting}
 
-\subsection{Lit Review}
-
-The electricity load forecasting literature is split into three categories: Short Term Load Forecasting (Up to a few days), Medium Term Load Forecasting (Typically weeks to months ahead) and Long Term Load Forecasting (A year or more in advance), each of which has a different application. Smart Meter (Grid) data is becoming more common, typically at the household level but occasionally Small/Medium Enterprises (SME) and is often modelled with the same approach as used for aggregate data. 
+A popular area of application for forecasting methodology is in short term electricity load forecasting (STLF), where forecasts for up to a day ahead are required. This literature traditionally uses a regions aggregate load at a given point in time as the time series to be forecasted, but the recent proliferation in smart meter data has caused increased interest in per household level forecasts. 
 \\
 
-We are most likely contributing to the Short Term literature, which is so far the largest. A wide range of models have been employed, particularly Neural Networks (usually one or two layers), Support Vector Machines, Stochastic Time Series (notably ARIMA, Exponential Smoothing, and their extensions though DLMs with Kalman Filters appear), as well as more recently additive semi-parametric models (add a spline function for weather to a spline function for past loads to a spline function for time of year etc.). 
+Smart meter data introduces multiple challenges to STLF: the time series dynamics are muted at the household level and replaced by a large amount of stochastic noise, and these households can display heterogeneous behaviours. Further, there are significant computational challenges associated with the number of smart meters to forecast often being in the thousands.
+\\
+
+(Citations) have found that clustering households into groups of similar behaviour, and creating a model for each behaviour type can help alleviate the difficulties in heterogeneity.
+\\
+
+Despite the prevalence of noise in the individual data, the models used for this data are largely similar to the aggregate load forecasting literature, where a mix of machine learning methods, such as neural networks and support vector machines have been used alongside arima and exponential smoothing time series models and semi-parametric spline models.
 \\
 
 Machine Learning models and semi-parametrics are supported by their strength in modelling non-linear relationships between load, lags of load, and exogeneous variables such as temperature, humidity, or other weather conditions and time of day/week/year effects. It is widely agreed that temperature effects improve forecasts, even with the added problem of forecasting the temperature. Details on temperature forecasts are rare, but BoM one day forecasts are used by Rob Hyndman regularly. In households with both air-conditioning and heating, the temperature-load relationship is V shaped with a minimum at 18.3 C.
@@ -589,10 +625,8 @@ Machine Learning models and semi-parametrics are supported by their strength in 
 Models are typically used to provide point estimates evaluated by MAPE, but density forecasts are becoming more popular, with quantile regression, scenario simulation + residual bootstraps, and conditional kernel density estimation employed, evaluated by MAPE, CRSP, or visually comparing ex-ante and ex-post densities. Bayesian models are rare but not completely absent.
 \\
 
-Half hour frequency data is common (possibly the most common short term forecasting frequency), and the non time-series models typically estimate 48 individual models, one for each half hour period, instead of explicitly modelling the intraday patterns. Restricted VAR models are an alternative, such as Tas' price forecasting model.
+Half hour frequency data is common (possibly the most common short term forecasting frequency), and it is observed that the time dynamics in electricity data depends strongly on the time of day, with a different parameter set employed per half hour period.
 \\
-
-An alternative literature explores load clustering and classification to allocate households into groups with similar behaviour without an explicit goal to then forecast load (eg. to infer consunption patterns to allow operators to manage supply). Several recent papers employ this idea in forecasting, where households are clustered by some method (typically K-means, though K-shape and a kernel based approach appears), and then aggregating each cluster, then forecasting each aggregate. These adds some degree of heterogeneity to an otherwise homogeneous literature.
 
 Our model would differ from the previous literature by:
 \begin{enumerate}
@@ -604,72 +638,120 @@ Our model would differ from the previous literature by:
 
 \subsection{Model}
 
-We consider half hourly electricity load data from 4443 Smart Meters in London for the period from 24/11/2011 until 28/02/2014 (Note: Will need to adjust number of households and time periods as sample sizes are not equal, see Figure 4). The following model is employed for each $i = 1, 2, \dots, N$, 
-
+We consider half hourly electricity load data from 200 Smart Meters in London for the period from 01/12/2012 until 31/01/201. For each household $i = 1, 2, \dots, N$ and time period $t = 1, 2, \dots, T$, we have raw data $y_{i, t}^*$, measured in kiloWatt Hours per halfhour period. This is non-negative and strongly skewed, so we log transform the data to
 \begin{equation}
-p(y_{i, t} | \theta, k_i, s_{i, t}, y_{i, 1:t-1}) = \sum{j=1}^K I(k_{i} = j) p_j(y_{i, t} | \theta, y_{i, 1:(t-1)}) + (1 - s_{i, t}) p_c (y_{i, t} | \theta)
+\label{logY}
+y_{i, t} = \log(y_{i, t}^* + 0.01)
 \end{equation}
-where $I(\cdot)$ is the indicator function and $s_{i, t} \in \{0, 1\}$. Each $p_j$ is the likelihood function for a time dependent model, and $p_c$ is the likelihood for a constant mean model. The overall model follows a Markov switching behaviour, where $s_{i, t} = 1$ implies that the household is occupied and electiricty load follows a time dynamic pattern, while $s_{i, t} = 0$ is a constant mean model used where a household may be away for extended periods and electricity load assumes a low level base load (Note: Separate model for each half hour / VAR structure?).  
-\\
 
-A mixture of $K$ dynamic models is employed to cluster households into one of $K$ time dependent patterns, where households in the same cluster share parameters. These models are composed of Seasonal Autogregressive Integrated Moving Average models with eXogenous temperature variables (SARIMAX) and Holt-Winters Exponential Smoothing (HWES) with multiple seasonalities (One day ago / One Week ago / One year ago?) fit to the residuals of a temperature model.
-\\
-
-These models are fit with UVB, first fitting models with one week/month/year's data (336 / ~10000 / 122640 observations), then repeatedly updating the fit with an additional days data (48 observations). After each fit, the electricity load for each household over each of the following 48 time periods is forecastedand evaluated with logscores / CRSP / MAPE.
-\\
-
-Each household has an indicator variable $k_i$, where $k_i \sim Multinomial(\pi)$ and $\pi \sim Dir(\alpha)$. This combination implies that
+\iffalse
+and apply a mixture of Markov switching models:
 \begin{equation}
-\label{kMarginalElec}
+\label{electricityModelSwitch}
+p(y_{i, t} | \theta, k_i, s_{i, t}, y_{i, 1:t-1}) = \sum_{j=1}^K I(k_{i} = j) \left(s_{i, t} p_{d, j}(y_{i, t} | \theta, y_{i, 1:(t-1)}) + (1 - s_{i, t}) p_{c, j} (y_{i, t} | \theta) \right)
+\end{equation}
+where $I(\cdot)$ is the indicator function, $s_{i, t} = 0, 1,$ is a Markov switching indicator and $k_i = 1, 2, \dots, K$ is a mixture component indicator. This model allows each household to switch between a time dynamic model with likelihood $p_{d, j} (y_{i, t} | \theta, y_{i, 1:(t-1)})$ and a low level constant mean model with likelihood $p_{c, j}(y_{i, j} | \theta)$ for periods where the household occupants are away for long periods.
+\\
+
+\fi
+
+and apply a mixture model:
+\begin{equation}
+\label{electricityModel}
+p(y_{i, t} | \theta, k_i, y_{i, 1:t-1}) = \sum_{j=1}^K I(k_{i} = j) p_{j}(y_{i, t} | \theta, y_{i, 1:(t-1)})
+\end{equation}
+where $I(\cdot)$ is the indicator function and $k_i = 1, 2, \dots, K$ is a mixture component indicator.
+
+The mixture formulation allows the households to cluster into $K$ latent groups with similar dynamic behaviour, as the household electricity consumption may depend strongly on factors such as working and sleeping hours. Clustering smart meter data into groups of households with similar behaviour and then creating a model per group has been shown by (citations) to reduce forecast error by as much as 30\% compared to employing a single model. Typically this clustering is carried out prior to the modeling process however we incorporate both clustering and parameter estimation into one component with the mixture model (\ref{electricityModel}).
+\\
+
+Each dynamic model $j = 1, 2, \dots, K$ follows a double seasonal ARIMAX $(3, 0, 0)(3, 0, 0)_{48}(1, 0, 0)_{336}$ where the two seasonal components correspond to $48$ observations per day and $336$ observations per week, given by
+\begin{equation}
+\label{dynamic}
+(1 - \phi_{1, j}^{(h)}L - \phi_{2, j}^{(h)}L^2 - \phi_{3, j}^{(h)} L^3)(1 - \phi_{48, j}^{(h)}L^{48} - \phi_{96, j}^{(h)}L^{96} - \phi_{144, j}^{(h)}L^{144})(1 - \phi_{336, j}^{(h)}L^{336}) (y_{i, t} -  \beta^{\prime, {(h)}}_{j} y_{i, t}) = \epsilon_{i, t}
+\end{equation}
+where $L$ is the lag operator corresponding to $L^n y_{i, t} = y_{i, t- n}$, $(h)$ denotes the halfhour period of the day at time $t$. $y_{i}$ is a $T \times 9$ matrix with a columns corresponding to an intercept, $|Temp^{(c)}_{t} - 18.3|$, where $Temp^{(c)}_{t}$ is the temperature in degrees Celcius, six indicator variables for day of the week, and an indicator variable for public holidays while $\beta_{j}^{(h)}$ is corresponding coefficient vector for that halfhour. Finally $\epsilon_{i, t}$ is modelled with a $N(0, \sigma^{2, (h)}_{j})$ distribution.
+\\
+
+Let $\theta^{(h)}_j = \{\log(\sigma^{2, (h)}_{j}, \beta_{j, 1}^{(h)}, \beta_{j, 2}^{(h)}, \dots, \beta_{j, 9}^{(h)}, \phi_{1, j}^{(h)}, \phi_{2, j}^{(h)}, \dots, \phi_{336, j}^{(h)}\}$, we utilise the following random walk prior to impose smoothness on the evolution of $\theta^{(h)}_j$ across the 48 halfhour periods each day,
+\begin{align}
+\label{dynamicPrior}
+\theta^{(1)}_j &\sim N(\boldsymbol{0}, \mathbb{I}), \\
+\theta^{(h)}_j &\sim N(\theta^{(h-1)}, 0.1^2 \mathbb{I}) \mbox{ for } h = 2, 3, \dots, 48.
+\end{align}
+where $\boldsymbol{0}$ is the zero vector and $\mathbb{I}$ is the identity matrix.
+The $48 \times K \theta^{(h)}_j$ vectors are collectively referred to as $\theta$.
+\\
+
+\iffalse
+Each of the $K$ constant models is given by
+\begin{equation}
+\label{constant}
+y_{i, t} = \mu_j + \epsilon_{i, t}
+\end{equation}
+where $\epsilon_{i, t} \sim N(0, \tau^2_{c, j})$ with the prior
+\begin{equation}
+\label{constantPrior}
+(\mu_j, \log(\tau_j^2))^{\prime} \sim N(\boldsymbol{0}, I).
+\end{equation}
+We assume that the constant model is applied to times when the house is empty and thus energy consumption is invariant to factors such as temperature and day of the week.
+\\
+\fi
+
+The per household indicator variables $k_i$ are modelled by
+\begin{equation} 
+\label{kConditional}
+k_i \sim Multinomial(\boldsymbol{\pi})
+\end{equation}
+where 
+\begin{equation}
+\label{piPrior}
+\boldsymbol{\pi} \sim Dir(\alpha_1, \alpha_2, \dots, \alpha_K)
+\end{equation}
+This combination implies that
+\begin{equation}
+\label{kMarginal}
 p(k_i = j) = \frac{\Gamma(\sum_{l=1}^K \alpha_l)}{\Gamma(1 + \sum_{l=1}^K \alpha_l)} \frac{\Gamma(1 + \alpha_j)}{\Gamma(\alpha_j)}.
 \end{equation}
-\\
 
-Placing a prior $p(\theta)$ on $\theta$, We can produce a posterior marginalised over each $k_i$,
-\begin{align}
-\label{marginaliseK}
-p(\theta, s_{1:N, 1:T_n} | y_{1:N, 1:T_n}) &\propto p(\theta) \prod_{i=1}^N \prod_{t=\tau}^{T_n} p(s_{i, t} | s_{i, t-1}) \nonumber \\
-&\times  \left(s_{i, t} \sum_{j=1}^K p(k_i = j)p_j(y_{i, t} | \theta, y_{i, 1:t-1}) + (1 - s_{i, t}) p_c(y_{i, t} | \theta) \right).
-\end{align}
-
-The use of a Hamiltonian filter allows this to be further marginalised over each $s_{i, t}$ via
+\iffalse
+For each of the $K$ groups we define switching probabilities $\rho_{1, 0, j} = p(s_{i, t} = 0 | s_{i, t-1} = 1, k_i = j)$ and $\rho_{0, 1, j} = p(s_{i, t} = 1 | s_{i, t-1} = 0, k_i = j)$ with uniform (0, 1) priors. The parameter vector of interest is given by 
 \begin{equation}
-p(\theta | y_{1:N, 1:T_n}) \propto p(\theta)  \prod_{i=1}^N \prod_{t=\tau}^{T_n} \sum_{m=1}^2 \sum_{n=1}^2 \rho_{mn} \zeta_{i, t-1, m} \eta_{i, t, n}
+\label{electricityTheta}
+\theta = \{\theta^{(1)}_j, \theta^{(2)}_j, \dots, \theta^{(48)}_j, \mu_j, \log(\tau^2_j), \rho_{0, 1, j}, \rho_{1, 0, j} \hspace{2mm} | j = 1, 2, \dots, K\}.
+\end{equation}
+
+The posterior distribution of this vector, $p(\theta | y_{1:N, 1:T_n})$, can be obtained by marginalisation of the complete model posterior $p(\theta, k_{1:N}, s_{1:N, 1:T_n} | y_{1:N, 1:T_n})$ over each $s_{i, t}$ and $k_i$ by the use of a Hamiltonian filter,
+\begin{equation}
+p(\theta | y_{1:N, 1:T_n}) \propto p(\theta)  \prod_{i=1}^N \prod_{t=\tau}^{T_n}\sum_{j=1}^K \sum_{m=0}^1 \sum_{n=0}^1 p(k_i = j) \rho_{m, n, j} \zeta_{i, t-1, m, j} \eta_{i, t, n, j}
 \end{equation}
 where
 \begin{align}
-\rho_{mn} &= p(s_{i, t} = n | s_{i, t-1} = m) \mbox{ assumed constant for all } i, t \\
-\zeta_{i, t-1, m} &= p(s_{i, t-1} = m | \theta, y_{i, 1:t-1}) \\
-\eta_{i, t, n} &= p(y_{i, t} | \theta, s_{i, t = n}, y_{i, 1:t-1}) \\
-&= \sum_{j=1}^K p(k_i = j)p_j(y_{i, t} | \theta, y_{i, 1:t-1}) + (1 - s_{i, t}) p_c(y_{i, t} | \theta).
+\zeta_{i, t-1, 1, j} &= p(s_{i, t-1} = 1 | \theta, k_i = j, y_{i, 1:t-1}) \\
+\zeta_{i, t-1, 0, j} &= 1 - p(s_{i, t-1} = 1 | \theta, k_i = j, y_{i, 1:t-1}) \\
+\eta_{i, t, 1, j} &= p_{d, j}(y_{i, t} | \theta, y_{i, 1:t-1}) \\
+\eta_{i, t, 0, j} &= p_{c, j}(y_{i, t} | \theta).
 \end{align}
 
-At each time point $\zeta_{i, t, n}$ can be calculated via
+At each time point $\zeta_{i, t, 1, j}$ can be recursively calculated via
 \begin{equation}
-s_{i, t, n} = \frac{ \sum_{m=1}^2 \rho_{mn} \zeta_{i, t-1, m} \eta_{i, t, n}}{ \sum_{m=1}^2 \sum_{n=1}^2 \rho_{mn} \zeta_{i, t-1, m} \eta_{i, t, n}}
+\zeta_{i, t, 1, j} = \frac{\sum_{m=0}^1 \rho_{m, 1, j} \zeta_{i, t-1, m, j} \eta_{i, t, 1, j}}{\sum_{m=0}^1 \sum_{n=0}^1 \rho_{m, n, j} \zeta_{i, t-1, m, j} \eta_{i, t, n, j}}
+\end{equation}
+from some starting value $\zeta_{i, 0, 1, j}$.
+\fi
+
+
+Each $k_i$ can be marginalised out of $p(\theta, k_{1:200} | y_{1:200, 1:T_n})$ to form a lower dimensional marginal posterior $p(\theta | y_{1:N, 1:T_n})$ via
+\begin{equation}
+p(\theta | y_{1:N, 1:T_n}) \propto p(\theta)  \prod_{i=1}^200 \prod_{t=\tau}^{T_n}\sum_{j=1}^K p(k_i = j)p_{j}(y_{i, t} | \theta, y_{i, 1:t-1})
 \end{equation}
 
-We can then fit an approximating distribution $q(\theta | y_{1:N, 1:T_n})$ to the fully marginalised posterior.
-
-It could be worthwhile to include a Box-Cox transformation of the dependent variable,
+We then apply UVB to approximate the posterior distribution $p(\theta | y_{1:200, 1:T_n})$ with a diagonal covariance multivariate gaussian distribution $q_{\lambda_n}(\theta | y_{1:200, 1:T_n})$, where the time period from the start of the sample until $T_1$ composes of the 2928 half hourly observations for the two month period from 01/12/2012 to 31/01/2013. We then apply a further 365 updates composing of one day's data so that $T_366$ is the end of the sample at 31/01/2014. At the end of every update, probabilistic forecasts of the next days electricity consumption at half hourly intervals for each household are made via
 \begin{equation}
-y_t^{\omega} = \left\{ \begin{array}{c} \frac{y_t^{\omega} - 1}{\omega}\mbox{ for } \omega \neq 0 \\ \log(y_t) \mbox{ for } \omega = 0\end{array}\right.
+p(y_{i, T_n+h} | y_{1:200, 1:T_n}) = \int_{\theta} \sum_{j=1}^K p(y_{i, T_n+h} | y_{1:200, 1:T_n}, \theta, k_i = j) p(k_i = j | \theta, y_{1:200, 1:T_n}) q_{\lambda_n}(\theta | y_{1:200, 1:T_n}) d\theta
 \end{equation}
-We will need the density to be differentiable with respect to $\omega$ for this to be part of the VB optimisation, so must exclude the $\log(y_t)$ case by ensuring $q(\omega)$ has zero probability mass on zero (ie. continuous). Then 
-\begin{equation}
-p_{y^{\omega}}(y_t^{\omega} | \theta) = p_y(y_t^{\omega} | \theta) y_t^{\omega - 1} \mbox{ for } \omega \neq 0
-\end{equation}
-and $\omega$ can be included in the parameter vector $\theta$. We could also include $K$ $\omega_j$ variables for each component of the mixture. 
-\\
-
-The model is compared to other popular models for this type of data (TBD).
-
-\begin{figure}
-\centering
-\includegraphics{electricity/households}
-\caption{Amount of households in the sample for a given number of days until 28/02/2014.}
-\end{figure}
-
+for $h = 1, 2, \dots, 48$.
+The model is compared to other popular models for this type of data (TBD) and the same model without clustering $(K = 1)$.
 
 \bibliographystyle{asa}
 \bibliography{references}
