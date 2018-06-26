@@ -162,7 +162,7 @@ struct Qlogdens {
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
     const{
-    using std::log; using std::exp; using std::pow; using std::sqrt; using std::lgamma;
+    using std::log; using std::exp; using std::pow;
     
     Matrix<T, Dynamic, 1> dets(mix);
     for(int k = 0; k < mix; ++k){
@@ -181,7 +181,7 @@ struct Qlogdens {
         kernel(k) += pow((theta(i) - lambda(k*4 + i)) / exp(lambda(4*mix + 4*k + i)), 2);
       }
     }
-    
+
     Matrix<T, Dynamic, 1> weights(mix);
     T sumExpZ = 0;
     for(int k = 0; k < mix; ++k){
@@ -244,6 +244,22 @@ Rcpp::List mixtureNormal(mat data, Rcpp::NumericMatrix lambdaIn, vec theta, vec 
   }
   return Rcpp::List::create(Rcpp::Named("grad") = grad,
                             Rcpp::Named("val") = elbo);
+}
+
+// Score derivative on its own
+// [[Rcpp::export]]
+Rcpp::List mixNormScore(vec theta, Rcpp::NumericMatrix lambdaIn, int mix){
+  Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
+  double qEval;
+  int dim = lambda.rows();
+  Matrix<double, Dynamic, 1> grad(dim);
+  
+  Qlogdens logQ(theta, mix);
+  stan::math::set_zero_all_adjoints();
+  stan::math::gradient(logQ, lambda, qEval, grad);
+  
+  return Rcpp::List::create(Rcpp::Named("grad") = grad,
+                            Rcpp::Named("val") = qEval);
 }
 
 
