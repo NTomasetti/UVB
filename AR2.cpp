@@ -8,149 +8,24 @@
 #include <Eigen/Dense>
 #include <RcppEigen.h>
 #include <Rcpp.h>
-#include <boost/math/distributions.hpp> 
 
 using namespace arma;
-using namespace boost::math;
 using namespace std;
 using Eigen::Matrix;
 using Eigen::Dynamic;
 using Eigen::MatrixXd; 
 using Eigen::Map;
 
-// Sobol generation and shuffling
 
-// [[Rcpp::export]]
-mat sobol_points(int N, int D) {
-  using namespace std;
-  std::ifstream infile("new-joe-kuo-6.21201" ,ios::in);
-  if (!infile) {
-    cout << "Input file containing direction numbers cannot be found!\n";
-    exit(1);
-  }
-  char buffer[1000];
-  infile.getline(buffer,1000,'\n');
-  
-  // L = max number of bits needed 
-  unsigned L = (unsigned)ceil(log((double)N)/log(2.0)); 
-  
-  // C[i] = index from the right of the first zero bit of i
-  unsigned *C = new unsigned [N];
-  C[0] = 1;
-  for (unsigned i=1;i<=N-1;i++) {
-    C[i] = 1;
-    unsigned value = i;
-    while (value & 1) {
-      value >>= 1;
-      C[i]++;
-    }
-  }
-  
-  // POINTS[i][j] = the jth component of the ith point
-  //                with i indexed from 0 to N-1 and j indexed from 0 to D-1
-  mat POINTS(N, D, fill::zeros);
-  
-  // ----- Compute the first dimension -----
-  
-  // Compute direction numbers V[1] to V[L], scaled by pow(2,32)
-  unsigned *V = new unsigned [L+1]; 
-  for (unsigned i=1;i<=L;i++) V[i] = 1 << (32-i); // all m's = 1
-  
-  // Evalulate X[0] to X[N-1], scaled by pow(2,32)
-  unsigned *X = new unsigned [N];
-  X[0] = 0;
-  for (unsigned i=1;i<=N-1;i++) {
-    X[i] = X[i-1] ^ V[C[i-1]];
-    POINTS(i, 0) = (double)X[i]/pow(2.0,32); // *** the actual points
-    //        ^ 0 for first dimension
-  }
-  
-  // Clean up
-  delete [] V;
-  delete [] X;
-  
-  
-  // ----- Compute the remaining dimensions -----
-  for (unsigned j=1;j<=D-1;j++) {
-    
-    // Read in parameters from file 
-    unsigned d, s;
-    unsigned a;
-    infile >> d >> s >> a;
-    unsigned *m = new unsigned [s+1];
-    for (unsigned i=1;i<=s;i++) infile >> m[i];
-    
-    // Compute direction numbers V[1] to V[L], scaled by pow(2,32)
-    unsigned *V = new unsigned [L+1];
-    if (L <= s) {
-      for (unsigned i=1;i<=L;i++) V[i] = m[i] << (32-i); 
-    }
-    else {
-      for (unsigned i=1;i<=s;i++) V[i] = m[i] << (32-i); 
-      for (unsigned i=s+1;i<=L;i++) {
-        V[i] = V[i-s] ^ (V[i-s] >> s); 
-        for (unsigned k=1;k<=s-1;k++) 
-          V[i] ^= (((a >> (s-1-k)) & 1) * V[i-k]); 
-      }
-    }
-    
-    // Evalulate X[0] to X[N-1], scaled by pow(2,32)
-    unsigned *X = new unsigned [N];
-    X[0] = 0;
-    for (unsigned i=1;i<=N-1;i++) {
-      X[i] = X[i-1] ^ V[C[i-1]];
-      POINTS(i, j) = (double)X[i]/pow(2.0,32); // *** the actual points
-      //        ^ j for dimension (j+1)
-    }
-    
-    // Clean up
-    delete [] m;
-    delete [] V;
-    delete [] X;
-  }
-  delete [] C;
-  
-  return POINTS;
-}
-
-// [[Rcpp::export]]
-mat shuffle(mat sobol){
-  using namespace std;
-  int N = sobol.n_rows;
-  int D = sobol.n_cols;
-  mat output(N, D, fill::zeros);
-  // draw a random rule of: switch 1 and 0  /  do not switch for each binary digit.
-  vec rule = randu<vec>(16);
-  for(int i = 0; i < N; ++i){
-    for(int j = 0; j < D; ++j){
-      // grab element of the sobol sequence
-      double x = sobol(i, j);
-      // convert to a binary representation
-      uvec binary(16, fill::zeros);
-      for(int k = 1; k < 17; ++k){
-        if(x > pow(2, -k)){
-          binary(k-1) = 1;
-          x -= pow(2, -k);
-        }
-      }
-      // apply the transform of tilde(x_k) = x_k + a_k mod 2, where a_k = 1 if rule_k > 0.5, 0 otherwise
-      for(int k = 0; k < 16; ++k){
-        if(rule(k) > 0.5){
-          binary(k) = (binary(k) + 1) % 2;
-        }
-      }
-      // reconstruct base 10 number from binary representation
-      for(int k = 0; k < 16; ++k){
-        if(binary(k) == 1){
-          output(i, j) += pow(2, -(k+1));
-        }
-      }
-    }
-  }
-  return output;
-}
-
-// VB Gradient Estimator Components
+/* VB Reparameterised Estimator for an AR2 Model
+ * Inputs:
+ * Z - vector of data
+ * epsilon - standard normal noise for reparameterisation
+ * mean - multivariate normal prior mean vector
+ * Linv - Inverse Lower Triangular (Cholesky) of Variance Matrix of multivariate normal prior
+ * conditional - If true evaluate likelihood conditional on first two observations, ie. p(z_3, ... z_T | theta, z_1, z_2)
+ * if false use the unconditional likelihood, p(z_1, z_2, ...,  z_T | theta)
+ */
 
 struct AR2 {
   const vec z;
@@ -163,9 +38,15 @@ struct AR2 {
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
     const{
-    using std::log; using std::exp; using std::pow; using std::sqrt; using std::fabs; using std::max;
+    // Note the template type T, and T operator()
+    // Need to explicitly state what std functions we are using inside the structure so stan can learn to take the derivative of these
+    using std::log; using std::exp; using std::pow; using std::sqrt; using std::fabs;
     int N = z.n_rows;
     
+    // Lambda is a 20 * 1 Matrix containing the length 4 mean vector of the multivariate normal approximation,
+    // followed by the 16 elements of the upper triangular (cholesky) decomposition of the variance matrix
+    // Transform theta = f(epsilon, lambda) = Mu + U * epsilon, location scale transform from a standard normal
+    // Note that this is a matrix containing elements of type T, which will be replace with stan::math::var when the structure is called in stan::math::gradient
     Matrix<T, Dynamic, 1> theta(4);
     for(int i = 0; i < 4; ++i){
       theta(i) = lambda(i);
@@ -173,9 +54,10 @@ struct AR2 {
         theta(i) += lambda(4*(i+1) + j) * epsilon(j);
       }
     }
-    
-    T sig2 = exp(theta(0)), mu = theta(1), phi1 = theta(2), phi2 = theta(3);
-    // Evaluate log(p(theta))
+    // Parameters of the AR2, z_t = mu + phi_1 (z_t-1 - mu) + phi_2 (z_t-2 - mu) + sigma * error
+    // Keep everything as type T as these are included in the chain rule differentiation
+    T sigmaSq = exp(theta(0)), mu = theta(1), phi1 = theta(2), phi2 = theta(3);
+    // Evaluate log(p(theta)) as the log kernel of a multivariate normal is -0.5 * (L^-1(theta - mean))' (L^-1(theta - mean))
     T prior = 0;
     Matrix<T, Dynamic, 1> kernel(4);
     kernel.fill(0);
@@ -185,177 +67,60 @@ struct AR2 {
       }
       prior += - 0.5 * pow(kernel(i), 2);
     }
-    // Evaluate log det J
+    // Evaluate the log absolute value of the determinant of the jacobian of the transform, which is log(sigmaSq) + log (diagonal of cholesky decomposition of variance matrix)
+    // std::fabs is a more stable version of std::abs
     T logdetJ = theta(0) + log(fabs(lambda(4))) + log(fabs(lambda(9))) + log(fabs(lambda(14))) + log(fabs(lambda(19)));
 
     
     // Evaluate log likelihood
     T logLik = 0;
     if(!conditional){
-      T gamma0 = sig2 * (1 - phi2) / ((1+phi2) * (1 - phi1 - phi2) * (1 + phi1 - phi2)); //Create the variance matrix for the initial states: Sigma = (gamma0, gamma1 //gamma1, gamma0)
+      // Unconditionally, the first two observations of an AR2 model have a bivariate normal distribution (assuming the error is normal)
+      // Create the variance matrix for the initial states: Sigma = [gamma0, gamma1 // gamma1, gamma0]
+      // Where gamma(k) is the k'th autocovariance
+      T gamma0 = sigmaSq * (1 - phi2) / ((1+phi2) * (1 - phi1 - phi2) * (1 + phi1 - phi2));
       T gamma1 = gamma0 * phi1 / (1 - phi2);
+      // Correlation between z_1 and z_2, equal to gamma1 / gamma0
       T rho = phi1 / (1 - phi2);
-      T cons = - log(2 * 3.14159 * gamma0 * sqrt(1-pow(rho, 2))); //bvn constant
-      T z12 = pow(z(0) - mu, 2)/gamma0 + pow(z(1) - mu, 2)/gamma0 - 2*rho*(z(0)-mu)*(z(1) - mu)/ gamma0; //inside exp term
+      T cons = - log(2 * 3.14159 * gamma0 * sqrt(1-pow(rho, 2))); //bvn constant, included as it depends on phi_1 and phi_2 via rho
+      T z12 = pow(z(0) - mu, 2)/gamma0 + pow(z(1) - mu, 2)/gamma0 - 2*rho*(z(0)-mu)*(z(1) - mu)/ gamma0; //inside the exp term of the bivariate normal
       logLik = cons - z12/(2*(1-pow(rho, 2))); // log likelihood of Z1, Z2
     }
     
+    // Loop through the log-likelihood of the remaining terms
     for(int t = 2; t < N; ++t){
-      logLik += - 0.5 * theta(0) - pow(z(t) - mu - phi1 * (z(t-1)-mu) - phi2 * (z(t-2)-mu), 2) / (2 * sig2);
+      logLik += - 0.5 * theta(0) - pow(z(t) - mu - phi1 * (z(t-1)-mu) - phi2 * (z(t-2)-mu), 2) / (2 * sigmaSq);
     }
     return prior + logLik + logdetJ;
   }
 };
 
+/* This function is exported to R, and handles the actual differentiation
+ * As we are differentiating with respect to lambda, it has to be an Eigen matrix, but everything else is constant so I prefer to keep them as arma objects
+ * To create the Eigen lambda, we need to pass in an Rcpp matrix and map it to Eigen's MatrixXd
+ * Input the data vector z, the parameter vector lambda, the noise vector epsilon, and the components of the prior distribution
+ * It outputs a list of the value of the ELBO evaluated at this lambda / epsilon, and a vector of the gradients
+ * I have an R gradient ascent wrapper that simulates epsilon, calls this function to get the gradients, then updates lambda via ADAM
+ * This is all inside a while loop that stops if the absolute value of change in the ELBO is below a certain threshold, or the number of iterations is too high
+ */
 // [[Rcpp::export]]
-Rcpp::List gradAR2(vec data, Rcpp::NumericMatrix lambdaIn, vec epsilon, vec mean, mat Linv, bool conditional = false){
+Rcpp::List gradAR2(vec z, Rcpp::NumericMatrix lambdaIn, vec epsilon, vec mean, mat Linv, bool conditional = false){
   Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
+  // eval stores the result of the call to AR2
   double eval;
+  // gradP stores the gradient vector, also an Eigen Matrix
   int dim = lambda.rows();
   Matrix<double, Dynamic, 1>  gradP(dim);
-  // Autodiff
-
-  AR2 p(data, epsilon, mean, Linv, conditional);
-  stan::math::set_zero_all_adjoints();
-  stan::math::gradient(p, lambda, eval, gradP);
   
+  // Autodiff
+  // Create the structure of the AR2 model
+  AR2 p(z, epsilon, mean, Linv, conditional);
+  // Reset all of stans internal gradients to zero
+  stan::math::set_zero_all_adjoints();
+  // Pass lambda into p and take the derivative
+  stan::math::gradient(p, lambda, eval, gradP);
+  // Create an R list with the gradient and value
   return Rcpp::List::create(Rcpp::Named("grad") = gradP,
                             Rcpp::Named("val") = eval);
 }
 
-// Pieces for the mixture approximations are shared between both prior specifications
-
-struct mixQlogdens {
-  const vec theta;
-  const int mix;
-  mixQlogdens(const vec& thetaIn, const int& mixIn) :
-    theta(thetaIn), mix(mixIn) {}
-  template <typename T> //
-  T operator ()(const Matrix<T, Dynamic, 1>& lambda)
-    const{
-    using std::log; using std::exp; using std::pow; using std::sqrt;
-    
-    int dim = theta.n_rows;
-    
-    Matrix<T, Dynamic, 1> dets(mix);
-    for(int k = 0; k < mix; ++k){
-      dets(k) = exp(lambda(dim*k + dim*mix));
-      for(int i = 1; i < dim; ++i){
-        dets(k) *= exp(lambda(dim*mix + dim*k + i));
-      }
-      dets(k) = 1.0 / dets(k);
-    }
-    
-    Matrix<T, Dynamic, 1> kernel(mix);
-    kernel.fill(0);
-    
-    for(int k = 0; k < mix; ++k){
-      for(int i = 0; i < dim; ++i){
-        kernel(k) += pow((theta(i) - lambda(k*dim + i)) / exp(lambda(dim*mix + dim*k + i)), 2);
-      }
-    }
-    
-    Matrix<T, Dynamic, 1> pi(mix);
-    T sumExpZ = 0;
-    for(int k = 0; k < mix; ++k){
-      pi(k) = exp(lambda(2*dim*mix + k));
-      sumExpZ += pi(k);
-    }
-    pi /= sumExpZ;
-    
-    T density = 0;
-    for(int k = 0; k < mix; ++k){
-      density += pi(k) * dets(k) * pow(6.283185, -3) *  exp(-0.5 * kernel(k));
-    }
-    
-    return log(density);
-  }
-};
-
-double pLogDensMix(vec z, vec theta, mat mean, cube SigInv, vec dets, vec weights){
-  int N = z.n_rows;
-  int mix = weights.n_rows;
-  // Constrained Positive
-  double sig2 = std::exp(theta(0)), mu = theta(1), phi1 = theta(2), phi2 = theta(3);
-  // Evaluate log(p(theta)), start by evaluative the quadratic in the MVN exponents
-  double prior = 0;
-  for(int k = 0; k < mix; ++k){
-    prior += weights(k) * pow(6.283185, -3) * dets(k) * exp(-0.5 * as_scalar((theta - mean.col(k)).t() * SigInv.slice(k) * (theta - mean.col(k))));
-  }
-  
-  // Evaluate log likelihood
-  double logLik = 0;
-  for(int t = 2; t < N; ++t){
-    logLik += - 0.5 * theta(0) - pow(z(t) - mu - phi1 * (z(t-1)-mu) - phi2 * (z(t-2)-mu), 2) / (2 * sig2);
-  }
-  
-  return std::log(prior) + logLik;
-}
-
-double pLogDensSingle(vec z, vec theta, vec mean, mat Linv){
-  int N = z.n_rows;
-  // Constrained Positive
-  double sig2 = std::exp(theta(0)), mu = theta(1), phi1 = theta(2), phi2 = theta(3);
-  // Evaluate log(p(theta))
-  double prior = 0;
-  mat sigInv = Linv.t() * Linv;
-  prior = - 0.5 * as_scalar((theta - mean).t() * sigInv * (theta - mean));
-  
-  // Evaluate log likelihood
-  double gamma0 = sig2 * (1 - phi2) / ((1+phi2) * (1 - phi1 - phi2) * (1 + phi1 - phi2)); //Create the variance matrix for the initial states: Sigma = (gamma0, gamma1 //gamma1, gamma0)
-  double gamma1 = gamma0 * phi1 / (1 - phi2);
-  
-  double rho = phi1 / (1 - phi2);
-  double cons = - log(2 * 3.14159 * gamma0 * sqrt(1-pow(rho, 2))); //bvn constant
-  double z12 = pow(z(0) - mu, 2)/gamma0 + pow(z(1) - mu, 2)/gamma0 - 2*rho*(z(0)-mu)*(z(1) - mu)/ gamma0; //inside exp term
-  double logLik = cons - z12/(2*(1-pow(rho, 2))); // log likelihood of Z1, Z2
-  
-  for(int t = 2; t < N; ++t){
-    logLik += - 0.5 * theta(0) - pow(z(t) - mu - phi1 * (z(t-1)-mu) - phi2 * (z(t-2)-mu), 2) / (2 * sig2);
-  }
-  // Evaluate log likelihood
-  return prior + logLik;
-}
-
-// These models are parameterised by the mean and log standard deviations
-// [[Rcpp::export]]
-Rcpp::List singlePriorMixApprox(vec data, Rcpp::NumericMatrix lambdaIn, vec theta, vec mean, mat Linv, int mix = 6){
-  Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
-  double qEval;
-  int dim = lambda.rows();
-  Matrix<double, Dynamic, 1> grad(dim);
-  
-  mixQlogdens logQ(theta, mix);
-  stan::math::set_zero_all_adjoints();
-  stan::math::gradient(logQ, lambda, qEval, grad);
-  
-  double logp = pLogDensSingle(data, theta, mean, Linv);
-  double elbo = logp - qEval;
-  for(int i = 0; i < dim; ++i){
-    grad(i) *= elbo;
-  }
-  return Rcpp::List::create(Rcpp::Named("grad") = grad,
-                            Rcpp::Named("val") = elbo);
-}
-
-// [[Rcpp::export]]
-Rcpp::List mixPriorMixApprox(vec data, Rcpp::NumericMatrix lambdaIn, vec theta, mat mean, cube SigInv, vec dets, vec weights){
-  Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
-  double qEval;
-  int dim = lambda.rows();
-  int mix = weights.n_rows;
-  Matrix<double, Dynamic, 1> grad(dim);
-  
-  mixQlogdens logQ(theta, mix);
-  stan::math::set_zero_all_adjoints();
-  stan::math::gradient(logQ, lambda, qEval, grad);
-  
-  double logp = pLogDensMix(data, theta, mean, SigInv, dets, weights);
-  double elbo = logp - qEval;
-  
-  for(int i = 0; i < dim; ++i){
-    grad(i) *= elbo;
-  }
-  return Rcpp::List::create(Rcpp::Named("grad") = grad,
-                            Rcpp::Named("val") = elbo);
-}

@@ -164,18 +164,18 @@ struct electricitySwitching {
   const mat x;
   const vec epsilon;
   const mat probK;
-  const vec pS1;
+  const mat pS1;
   const cube priorMean;
   const cube priorLinv;
   const vec order;
   const int Tn;
   const bool uniformRho;
-  electricitySwitching(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const vec& pS1In, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn, const bool& uRhoin) :
+  electricitySwitching(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const mat& pS1In, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn, const bool& uRhoin) :
     y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), pS1(pS1In), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), uniformRho(uRhoin)  {}
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
     const{
-    using std::log; using std::exp; using std::pow; using std::sqrt; using std::fabs;
+    using std::log; using std::exp; using std::pow; using std::sqrt; using std::fabs; using std::max;
     int N = y.n_cols; // Number of units
     int K = probK.n_rows; // Number of dynamic models
     int numPars = 1 + order.n_elem + x.n_cols; // Parameters = Logvar, mean, beta + order parameters
@@ -270,7 +270,7 @@ struct electricitySwitching {
       likelihood.fill(0);
       for(int k = 0; k < K; ++k){
         // Grab p(S_i,T = 1 | y_i, 1:T)
-        T pS1modK = pS1(i);
+        T pS1modK = pS1(k, i);
         // components of the dynamic model
         T var = exp(thetaD(0, k));
         
@@ -278,54 +278,19 @@ struct electricitySwitching {
         for(int t = tau; t < y.n_rows; ++t){
           T mean = 0;
           // Add B X_t
-          for(int m = 0; m < 8; ++m){
+          for(int m = 0; m < x.n_cols; ++m){
             mean += thetaD(1 + m, k) * x(t, m);
           }
-          // Deal with any AR terms containing the non-seasonal AR components
-          for(int l = 0; l < 3; ++l){
+          // Deal with any AR terms 
+          for(int l = 0; l < order.n_elem; ++l){
             T AR = y(t - order(l));
             // Subtract B X_{t-l}
-            for(int m = 0; m < 8; ++m){
+            for(int m = 0; m < x.n_cols; ++m){
               AR -= thetaD(1 + m, k) * x(t - order(l), m);
             }
-            mean += thetaD(10 + l, k) * AR;
-            // Seasonal components that are the product of non-seasonal and first seasonal, and the triple product between all three components
-            // Products between two components have a negative sign, but the triple product is positive again.
-            for(int l2 = 3; l2 < 6; ++l2) {
-              AR = y(t - order(l) - order(l2));
-              T AR2 = y(t - order(l) - order(l2) - order(6));
-              for(int m = 0; m < 8; ++m){
-                AR -= thetaD(1 + m, k) * x(t - order(l) - order(l2), m);
-                AR2 -= thetaD(1 + m, k) * x(t - order(l) - order(l2) - order(6), m);
-              }
-              mean -= thetaD(10 + l, k) * thetaD(10 + l2, k) * AR;
-              mean += thetaD(10 + l, k) * thetaD(10 + l2, k) * thetaD(10 + 6, k) * AR2;
-            }
-            // The product between the nonseasonal and the second seasonals
-            AR = y(t - order(l) - order(6));
-            for(int m = 0; m < 8; ++m){
-              AR -= thetaD(1 + m, k) * x(t - order(l) - order(6), m);
-            }
-            mean -= thetaD(10 + l, k) * thetaD(10 + 6, k) * AR;
+            mean += thetaD(1 + x.n_cols + l, k) * AR;
           }
-          // Next We need to deal with the first order seasonality, and the product between the first and second orders
-          for(int l2 = 3; l2 < 6; ++l2){
-            T AR = y(t - order(l2));
-            T AR2 = y(t - order(l2) - order(6));
-            for(int m = 0; m < 8; ++m){
-              AR -= thetaD(1 + m, k) * x(t - order(l2), m);
-              AR2 -= thetaD(1 + m, k) * x(t - order(l2) - order(6), m);
-            }
-            mean += thetaD(10 + l2, k) * AR2;
-            mean -= thetaD(10 + l2, k) * thetaD(10 + 6, k) * AR2;
-          }
-          // Finally include the second order seasonality
-          T AR = y(t - order(6));
-          for(int m = 0; m < 8; ++m){
-            AR -= thetaD(1 + m, k) * x(t - order(6), m);
-          }
-          mean += thetaD(10 + 6, k) * AR;
-        
+          
           T eta1 = 1.0 / sqrt(2 * 3.14159 * var) * exp(-pow(y(t, i) - mean, 2) / (2 * var));
           T eta0 = 1.0 / sqrt(2 * 3.14159 * exp(thetaC(0, k))) * exp(-pow(y(t, i) - thetaC(1, k), 2) / (2 * exp(thetaC(0, k))));
           
@@ -338,7 +303,7 @@ struct electricitySwitching {
       }
       // Update loglikelihood now that all K terms in likelihood have been added
       for(int t = tau; t < y.n_rows; ++t){
-        logLik += likelihood(t - tau);
+        logLik += log(likelihood(t - tau));
       }
     }
     
@@ -353,9 +318,8 @@ struct electricitySwitching {
 // epsilon ~ Z
 // probK, prior probability of k_i = j, rows: i, columns: j
 // pS1, prior probability of being in state 1
-// priorMean: A cube, first slice, first two rows: Constant means, second two rows: Switching means, second slide: dynamic means. Columns: Each K 
-// priorLinv, a cube of the constant model + rho L inverse
-// priorSd: A matrix a dynamic model SD
+// priorMean: A cube, first slice, first two rows: Constant means, second two rows: Switching means, next K slices: dynamic means. Columns: Each halfhour 
+// priorLinv, a cube of the constant model + rho L inverse (one slice per group) + the dim * 48 theta^H inverses
 // order, a vector of the lags of the dynamic model
 // Tn: Size of current batch in terms of T (T is reserved in structures for stan::math::var)
 struct electricitySwitchingVAR {
@@ -363,13 +327,13 @@ struct electricitySwitchingVAR {
   const mat x;
   const vec epsilon;
   const mat probK;
-  const vec pS1;
+  const mat pS1;
   const cube priorMean;
   const cube priorLinv;
   const vec order;
   const int Tn;
   const bool uniformRho;
-  electricitySwitchingVAR(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const vec& pS1In, const cube& priorMeanIn, 
+  electricitySwitchingVAR(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const mat& pS1In, const cube& priorMeanIn, 
                           const  cube& priorLinvIn, const vec& orderIn, const int& TnIn, const bool& uRhoin) :
     y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), pS1(pS1In), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), uniformRho(uRhoin)  {}
   template <typename T> //
@@ -378,13 +342,16 @@ struct electricitySwitchingVAR {
     using std::log; using std::exp; using std::pow; using std::sqrt; using std::fabs; using std::max;
     int N = y.n_cols; // Number of units
     int K = probK.n_rows; // Number of dynamic models
-    int numPars = 48 * (1 + x.n_cols + order.n_elem); // Parameters = Logvar, mean, beta + order parameters
+    int dim = 1 + x.n_cols + order.n_elem;
+    int numPars = 48 * dim; // Parameters = Logvar, mean, beta + order parameters
+   
     
     // Create the constant varaiance and mean parameters and switching probabilities
     // Columns: Model, Rows: log var / mean, p01, p10
     Matrix<T, Dynamic, Dynamic> thetaC(2, K),  rhoUnnorm(2, K),  rho(2, K); 
-    // Add parts to logdet J as we go
-    T logdetJ = 0;
+    // Define the output variables
+    T logdetJ = 0, prior = 0, logLik = 0;
+    // We will add parts to logdet J as we go
     for(int k = 0; k < K; ++k){
       for(int i = 0; i < 2; ++i){
         thetaC(i, k) = lambda(k*5 + i);
@@ -403,7 +370,6 @@ struct electricitySwitchingVAR {
         logdetJ += -rhoUnnorm(i, k) - 2 * log(exp(rhoUnnorm(i, k)) + 1);
       }
     }
-    
     // Create theta for the dynamic models, rows: Different parameters, cols: Different models
     Matrix<T, Dynamic, Dynamic> thetaD (numPars, K);
     for(int k = 0; k < K; ++k){
@@ -415,8 +381,8 @@ struct electricitySwitchingVAR {
         }
       }
     }
+    
     // Evaluate log(p(theta)), starting with log(var)_c, mu_c ~ N
-    T prior = 0;
     Matrix<T, Dynamic, 1> kernelCons(2);
     for(int k = 0; k < K; ++k){
       kernelCons.fill(0);
@@ -427,7 +393,6 @@ struct electricitySwitchingVAR {
         prior += - 0.5 * pow(kernelCons(i), 2);
       }
     }
-    
     // Rho has a uniform prior on the first fit, but has a MVN prior for updates
     if(!uniformRho){
       for(int k = 0; k < K; ++k){
@@ -440,36 +405,32 @@ struct electricitySwitchingVAR {
         }
       }
     }
-    
     // Evaluate log(p(theta)), starting with log(var)_c, mu_c ~ N
     // Add the dynamic model priors, each independent normal (not identitcal)
     // Each set of 48 thetas has its own 48*48 priorLinv, so we iterate over the groups, then theta blocks, then each halfhour parameter
     // Each L inverse is a banded matrix, containing terms only in the diagonal and row immediately below the diagonal.
     // So we only need to evaluate two columns per row instead of the whole lower triangle of the matrix.
     for(int k = 0; k < K; ++k){
-      for(int d = 0; d < 17; ++d){
+      for(int d = 0; d < dim; ++d){
         for(int i = 0; i < 48; ++i){
           T kernelDyn = 0;
           for(int j = max(0, i-1); j <= i; ++j){
-            kernelDyn += (thetaD(48*d + j, k) - priorMean(48*d + j, k, 1)) * priorLinv(i, j, 17*k + d);
+            kernelDyn += (thetaD(48*d + j, k) - priorMean(d, j, k)) * priorLinv(i, j, K + dim*k + d);
           }
           prior += - 0.5 * pow(kernelDyn, 2);
         }
       }
     }
-    
-    
     // Calculate the log likelihood
-    T logLik = 0;
     Matrix<T, Dynamic, 1> pS1vec(N);
     for(int i = 0; i < N; ++i){
-      T pS1modK = pS1(i);
       // Starting point is tau, will be part way through the data to deal with lagged variables
       int tau = y.n_rows - Tn;
       // For each smart meter we create the likelihood as a sum of K many Hamilton Filtered likelihoods.
       Matrix<T, Dynamic, 1> likelihood(Tn);
+      likelihood.fill(0);
       for(int k = 0; k < K; ++k){
-        
+        T pS1modK = pS1(k, i);
         // yt ~ N(beta * x + sum_l (theta * (y_t-l - beta*x_t-l)), var)
         for(int t = tau; t < y.n_rows; ++t){
           int halfhour = t % 48;
@@ -477,20 +438,19 @@ struct electricitySwitchingVAR {
           T var = exp(thetaD(halfhour, k));
           T mean = 0;
           // Add B X_t
-          for(int m = 0; m < 8; ++m){
+          for(int m = 0; m < x.n_cols; ++m){
             mean += thetaD(48 * (1 + m) + halfhour, k) * x(t, m);
           }
-          // Add AR terms, theta * (y_{t-l} - B X_{t-l})
+          // Deal with any AR terms 
           for(int l = 0; l < order.n_elem; ++l){
-            // y_{t-l}
-            T AR = y(t - order(l), i);
-            for(int m = 0; m < 8; ++m){
-              // (y_{t-l} - B X_{t-l})
+            T AR = y(t - order(l));
+            // Subtract B X_{t-l}
+            for(int m = 0; m < x.n_cols; ++m){
               AR -= thetaD(48 * (1 + m) + halfhour, k) * x(t - order(l), m);
             }
-            // multiply by theta
-            mean += thetaD(48 * (10 + l) + halfhour) * AR;
+            mean += thetaD(48 * (1 + x.n_cols + l) + halfhour, k) * AR;
           }
+          
           
           T eta1 = 1.0 / sqrt(2 * 3.14159 * var) * exp(-pow(y(t, i) - mean, 2) / (2 * var));
           T eta0 = 1.0 / sqrt(2 * 3.14159 * exp(thetaC(0, k))) * exp(-pow(y(t, i) - thetaC(1, k), 2) / (2 * exp(thetaC(0, k))));
@@ -500,13 +460,11 @@ struct electricitySwitchingVAR {
           T lik1 = pS1modK * (1 - rho(1, k)) * eta1 + (1 - pS1modK) * rho(0, k) * eta1;
           likelihood(t - tau) += probK(k, i) * (lik0 + lik1);
           pS1modK = lik1 / (lik0 + lik1);
-          
         }      
       }
-      for(int t = tau; t < y.n_rows; ++t){
-        logLik += likelihood(t - tau);
+      for(int t = 0; t < Tn; ++t){
+        logLik += log(likelihood(t));
       }
-      
     }
     
     return prior + logLik + logdetJ;
@@ -526,11 +484,11 @@ struct electricityStandard{
   const mat x;
   const vec epsilon;
   const mat probK;
-  const mat priorMean;
+  const cube priorMean;
   const cube priorLinv;
   const vec order;
   const int Tn;
-  electricityStandard(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const mat& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn) :
+  electricityStandard(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn) :
     y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn)  {}
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
@@ -567,7 +525,7 @@ struct electricityStandard{
     for(int k = 0; k < K; ++k){
       for(int i = 0; i < numPars; ++i){
         for(int j = 0; j <= i; ++j){
-          kernelDyn(i, k) += (theta(j, k) - priorMean(j, k)) * priorLinv(i, j, k);
+          kernelDyn(i, k) += (theta(j, k) - priorMean(j, k, 0)) * priorLinv(i, j, k);
         }
         prior += - 0.5 * pow(kernelDyn(i, k), 2);
       }
@@ -584,53 +542,19 @@ struct electricityStandard{
           
           T mean = 0;
           // Add B X_t
-          for(int m = 0; m < 8; ++m){
+          for(int m = 0; m < x.n_cols; ++m){
             mean += theta(1 + m, k) * x(t, m);
           }
-          // Deal with any AR terms containing the non-seasonal AR components
-          for(int l = 0; l < 3; ++l){
+          // Deal with any AR terms 
+          for(int l = 0; l < order.n_elem; ++l){
             T AR = y(t - order(l));
             // Subtract B X_{t-l}
-            for(int m = 0; m < 8; ++m){
+            for(int m = 0; m < x.n_cols; ++m){
               AR -= theta(1 + m, k) * x(t - order(l), m);
             }
-            mean += theta(10 + l, k) * AR;
-            // Seasonal components that are the product of non-seasonal and first seasonal, and the triple product between all three components
-            // Products between two components have a negative sign, but the triple product is positive again.
-            for(int l2 = 3; l2 < 6; ++l2) {
-              AR = y(t - order(l) - order(l2));
-              T AR2 = y(t - order(l) - order(l2) - order(6));
-              for(int m = 0; m < 8; ++m){
-                AR -= theta(1 + m, k) * x(t - order(l) - order(l2), m);
-                AR2 -= theta(1 + m, k) * x(t - order(l) - order(l2) - order(6), m);
-              }
-              mean -= theta(10 + l, k) * theta(10 + l2, k) * AR;
-              mean += theta(10 + l, k) * theta(10 + l2, k) * theta(10 + 6, k) * AR2;
-            }
-            // The product between the nonseasonal and the second seasonals
-            AR = y(t - order(l) - order(6));
-            for(int m = 0; m < 8; ++m){
-              AR -= theta(1 + m, k) * x(t - order(l) - order(6), m);
-            }
-            mean -= theta(10 + l, k) * theta(10 + 6, k) * AR;
+            mean += theta(1 + x.n_cols + l, k) * AR;
           }
-          // Next We need to deal with the first order seasonality, and the product between the first and second orders
-          for(int l2 = 3; l2 < 6; ++l2){
-            T AR = y(t - order(l2));
-            T AR2 = y(t - order(l2) - order(6));
-            for(int m = 0; m < 8; ++m){
-              AR -= theta(1 + m, k) * x(t - order(l2), m);
-              AR2 -= theta(1 + m, k) * x(t - order(l2) - order(6), m);
-            }
-            mean += theta(10 + l2, k) * AR2;
-            mean -= theta(10 + l2, k) * theta(10 + 6, k) * AR2;
-          }
-          // Finally include the second order seasonality
-          T AR = y(t - order(6));
-          for(int m = 0; m < 8; ++m){
-            AR -= theta(1 + m, k) * x(t - order(6), m);
-          }
-          mean += theta(10 + 6, k) * AR;
+          
           // Calculate thel likelihood as the sum of each model likelihood * p(k_i = j)
           likelihood += probK(k, i) / sqrt(2 * 3.14159 * exp(theta(0, k))) * exp(-pow(y(t, i) - mean, 2) / (2 * exp(theta(0, k))));
         }
@@ -646,7 +570,7 @@ struct electricityStandard{
 // x: temperature vector with rows matching y time period
 // epsilon ~ Z
 // probK, prior probability of k_i = j, rows: i, columns: j
-// priorMean, a matrix, one column per group, rows are the 48 log(var) means, the 48 beta1 means etc.
+// priorMean, a 17 * 48 * K cube, one column per halfhour, rows are the means, slices are the groups.
 // prior Linv, a 48*48*(K*17) cube. Slice 17*k + d is the L inverse matrix for the prior of the 48 elements of theta_d,k
 // order, a vector of the lags of the dynamic model
 // Tn: Size of current batch in terms of T (T is reserved in structures for stan::math::var)
@@ -655,11 +579,11 @@ struct electricityStandardVAR{
   const mat x;    
   const vec epsilon;
   const mat probK;
-  const mat priorMean;
+  const cube priorMean;
   const cube priorLinv;
   const vec order;
   const int Tn;
-  electricityStandardVAR(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const mat& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn) :
+  electricityStandardVAR(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn) :
     y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn)  {}
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
@@ -667,7 +591,8 @@ struct electricityStandardVAR{
     using std::log; using std::exp; using std::pow; using std::sqrt; using std::fabs; using std::max;
     int N = y.n_cols; // Number of units
     int K = probK.n_rows; // Number of dynamic models
-    int numPars = 48 * (1 + x.n_cols + order.n_elem); // Parameters = Logvar, mean, beta + order parameters
+    int dim = 1 + x.n_cols + order.n_elem;
+    int numPars = 48 * dim; // Parameters = Logvar, mean, beta + order parameters
     
     // Create theta for the j'th dynamic model, rows: Different parameters, cols: Different models
     T logdetJ = 0, prior = 0, logLik = 0;
@@ -687,41 +612,42 @@ struct electricityStandardVAR{
     // Each set of 48 thetas has its own 48*48 priorLinv, so we iterate over the groups, then theta blocks, then each halfhour parameter
     // Each L inverse is a banded matrix, containing terms only in the diagonal and row immediately below the diagonal.
     // So we only need to evaluate two columns per row instead of the whole lower triangle of the matrix.
+    // In updates it is diagonal
     for(int k = 0; k < K; ++k){
-      for(int d = 0; d < 17; ++d){
+      for(int d = 0; d < dim; ++d){
         for(int i = 0; i < 48; ++i){
           T kernelDyn = 0;
           for(int j = max(0, i-1); j <= i; ++j){
-            kernelDyn += (theta(48*d + j, k) - priorMean(48*d + j, k)) * priorLinv(i, j, 17*k + d);
+            kernelDyn += (theta(48*d + j, k) - priorMean(d, j, k)) * priorLinv(i, j, dim*k + d);
           }
           prior += - 0.5 * pow(kernelDyn, 2);
         }
       }
     }
-    
     // Calculate the log likelihood
     // Starting point is tau, will be part way through the data as the first data points are lags.
     int tau = y.n_rows - Tn;
-    
     for(int i = 0; i < N; ++i){
       for(int t = tau; t < y.n_rows; ++t){
-        int hh = t % 48;
+        int halfhour = t % 48;
         T likelihood = 0;
         for(int k = 0; k < K; ++ k){
           T mean = 0;
           // Add B X_t
-          for(int m = 0; m < 8; ++m){
-            mean += theta(48 * (1 + m) + hh, k) * x(t, m);
+          for(int m = 0; m < x.n_cols; ++m){
+            mean += theta(48 * (1 + m) + halfhour, k) * x(t, m);
           }
-          // Add AR terms, theta * (y_{t-l} - B X_{t-l})
+          // Deal with any AR terms 
           for(int l = 0; l < order.n_elem; ++l){
-            T AR = y(t - order(l), i);
-            for(int m = 0; m < 8; ++m){
-              AR -= theta(48 * (1 + m) + hh, k) * x(t - order(l), m);
+            T AR = y(t - order(l));
+            // Subtract B X_{t-l}
+            for(int m = 0; m < x.n_cols; ++m){
+              AR -=  theta(48 * (1 + m) + halfhour, k) * x(t - order(l), m);
             }
-            mean += theta(48 * (10 + l) + hh) * AR;
+            mean +=  theta(48 * (1 + x.n_cols + l) + halfhour, k) * AR;
           }
-          likelihood += probK(k, i) / sqrt(2 * 3.14159 * exp(theta(hh, k))) * exp(-pow(y(t, i) - mean, 2) / (2 * exp(theta(hh, k))));
+          
+          likelihood += probK(k, i) / sqrt(2 * 3.14159 * exp(theta(halfhour, k))) * exp(-pow(y(t, i) - mean, 2) / (2 * exp(theta(halfhour, k))));
         }
         logLik += log(likelihood);
       }
@@ -732,7 +658,7 @@ struct electricityStandardVAR{
 
 // [[Rcpp::export]]
 Rcpp::List elecModel(mat y, Rcpp::NumericMatrix lambdaIn, vec epsilon, mat x, mat probK, cube priorMean, cube priorLinv, vec order,
-                     int Tn, vec ps1, bool uniformRho = true, bool switching = false, bool var = false) {
+                     int Tn, mat ps1, bool uniformRho = true, bool switching = false, bool var = false) {
   Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
   double eval;
   int dim = lambda.rows();
@@ -750,11 +676,11 @@ Rcpp::List elecModel(mat y, Rcpp::NumericMatrix lambdaIn, vec epsilon, mat x, ma
     }
   } else {
     if(var){
-      electricityStandardVAR p(y, x, epsilon, probK, priorMean.slice(0), priorLinv, order, Tn);
+      electricityStandardVAR p(y, x, epsilon, probK, priorMean, priorLinv, order, Tn);
       stan::math::set_zero_all_adjoints();
       stan::math::gradient(p, lambda, eval, gradP);
     } else {
-      electricityStandard p(y, x, epsilon, probK, priorMean.slice(0), priorLinv, order, Tn);
+      electricityStandard p(y, x, epsilon, probK, priorMean, priorLinv, order, Tn);
       stan::math::set_zero_all_adjoints();
       stan::math::gradient(p, lambda, eval, gradP);
     }
@@ -778,40 +704,22 @@ vec arLikelihood(vec y, mat x, mat theta, vec order, int T, bool log, bool var){
   vec beta, phi, likelihood(T);
   
   if(!var){
-    beta = theta(span(1, 9), 0);
-    phi = theta(span(10, 16), 0);
+    beta = theta(span(1, x.n_cols), 0);
+    phi = theta(span(x.n_cols + 1, x.n_cols + order.n_elem), 0);
   }
-  
   
   for(int t = tau; t < y.n_elem; ++t){
     if(var){
       int hh = t % 48;
-      beta = theta(span(1, 9), hh);
-      phi = theta(span(10, 16), hh);
+      beta = theta(span(1, x.n_cols), hh);
+      phi = theta(span(x.n_cols + 1, x.n_cols + order.n_elem), hh);
     }
     
     double mean = as_scalar(x.row(t) * beta);
-    
     // Deal with any AR terms containing the non-seasonal AR components
-    for(int l = 0; l < 3; ++l){
+    for(int l = 0; l < order.n_elem; ++l){
       mean += phi(l) * (y(t - order(l)) - as_scalar(x.row(t - order(l)) * beta));
-      // Seasonal components that are the product of non-seasonal and first seasonal, and the triple product between all three components
-      // Products between two components have a negative sign, but the triple product is positive again.
-      for(int l2 = 3; l2 < 6; ++l2) {
-        mean -= phi(l) * phi(l2) * (y(t - order(l) - order(l2)) - as_scalar(x.row(t - order(l) - order(l2)) * beta));
-        mean += phi(l) * phi(l2) * phi(6) * (y(t - order(l) - order(l2) - order(6)) - as_scalar(x.row(t - order(l) - order(l2) - order(6)) * beta));
-      }
-      // The product between the nonseasonal and the second seasonals
-      mean -= phi(l) * phi(6) * (y(t - order(l) - order(6)) - as_scalar(x.row(t - order(l) - order(6)) * beta));
     }
-    // Next We need to deal with the first order seasonality, and the product between the first and second orders
-    for(int l2 = 3; l2 < 6; ++l2){
-      mean += phi(l2) * (y(t - order(l2)) - as_scalar(x.row(t - order(l2)) * beta));
-      mean -= phi(l2) * phi(6) * (y(t - order(l2) - order(6)) - as_scalar(x.row(t - order(l2) - order(6)) * beta));
-    }
-    // Finally include the second order seasonality
-    mean += phi(6) * (y(t - order(6)) - as_scalar(x.row(t - order(6)) * beta));
-    
     // Finally calculate the likelihood
     if(log){
       likelihood(t - tau) =  - 0.5 * std::log(2 * 3.14159) - 0.5 * theta(0, hh) - pow(y(t) - mean, 2) / (2 * exp(theta(0, hh)));
@@ -822,7 +730,7 @@ vec arLikelihood(vec y, mat x, mat theta, vec order, int T, bool log, bool var){
   return likelihood;
 }
 
-// Returns log p(k = j | theta, y) up to proportionality for non switching models
+// Returns p(k = j | theta, y) up to proportionality for non switching models
 // Passes the boolean var through tp arLikelihood
 // Essentially a log version of Ar likelihood that includes the prior
 // y: Data
@@ -832,14 +740,13 @@ vec arLikelihood(vec y, mat x, mat theta, vec order, int T, bool log, bool var){
 // T: amount of data to be evaluated
 // [[Rcpp::export]]
 double probK (vec y, mat x, mat theta, vec order, double prior, int T, bool var){
-  int tau = y.n_elem - T;
   double logdens = log(prior);
   vec loglik = arLikelihood(y, x, theta, order, T, true, var);
   logdens += sum(loglik);
   return logdens;
 }
 
-// Returns log p(k = j | theta, y_{1:T}) and p(s_T = 1 | theta, K, y_{1:T})up to proportionality
+// Returns p(k = j | theta, y_{1:T}) and p(s_T = 1 | theta, K, y_{1:T})up to proportionality
 // y: Data
 // thetaD: parameters of dynamic model j with per halfhour columns
 // thetaC: parameters of constant model j
@@ -872,77 +779,48 @@ vec probSKHF (vec y, mat x, mat thetaD, vec thetaC, vec order, double pS1, doubl
 // Will evaluate p(ki = j) and forecast
 // Theta should be 17 * (48 or 1) * K, so groups in slices and var halfhours in columns
 // fcVAR should work the same way, 48 periods ahead in rows, 1 or 48 per halfhour sets in columns, and groups in slices
+// will forecast the number of rows in fcVar ahead
 // [[Rcpp::export]]
-Rcpp::List forecastStandard (vec y, mat x, cube theta, vec order, vec priorK, cube fcVar, vec support, int Tn, bool var){
+mat forecastStandard (vec y, mat x, cube theta, vec order, vec pkNorm, cube fcVar, vec support, bool var){
   int M = support.n_elem;
   int H = fcVar.n_rows;
-  int K = priorK.n_elem;
+  int K = pkNorm.n_elem;
   int T = y.n_rows - H - 1;
   mat density(M, H, fill::zeros);
-  vec pk(K), pkNorm(K);
   
-  // Evaluate p(k_i = j)
-  if(K == 1){
-    pkNorm.fill(1);
-  } else {
-    for(int ki = 0; ki < K; ++ki){
-      pk(ki) = probK(y(span(0, T)), x.rows(0, T), theta.slice(ki), order, priorK(ki), Tn, var);
-    }
-
-    // Normalise the weights
-    double maxP = max(pk);
-    for(int ki = 0; ki < K; ++ki){
-      pk(ki) -= maxP;
-    }
-    pkNorm = exp(pk) / sum(exp(pk));
-  }
-  // Forecast each model
+  // Forecast each model, skip components with zero probability
   for(int ki = 0; ki < K; ++ki){
-    
     vec beta, phi, ylag = {y(T), y(T-1), y(T-2)};
     int hh = 0;
-  
+      
     for(int h = 1; h <= H; ++h){
       if(var){
-        int hh = (T + h) % 48;
+        hh = (T + h) % 48;
       }
-      vec beta = theta.slice(ki)(span(1, 9), hh);
-      vec phi = theta.slice(ki)(span(10, 16), hh);
-      
+      vec beta = theta.slice(ki)(span(1, x.n_cols), hh);
+      vec phi = theta.slice(ki)(span(x.n_cols+1, x.n_cols + order.n_elem), hh);
+        
       double mean = as_scalar(x.row(T + h) * beta);
-      
+        
       // Deal with any AR terms containing the non-seasonal AR components
       for(int l = 0; l < 3; ++l){
         mean += phi(l) * (ylag(l) - as_scalar(x.row(T + h - order(l)) * beta));
-        // Seasonal components that are the product of non-seasonal and first seasonal, and the triple product between all three components
-        // Products between two components have a negative sign, but the triple product is positive again.
-        for(int l2 = 3; l2 < 6; ++l2) {
-          mean -= phi(l) * phi(l2) * (y(T + h - order(l) - order(l2)) - as_scalar(x.row(T + h - order(l) - order(l2)) * beta));
-          mean += phi(l) * phi(l2) * phi(6) * (y(T + h - order(l) - order(l2) - order(6)) - as_scalar(x.row(T + h - order(l) - order(l2) - order(6)) * beta));
-        }
-        // The product between the nonseasonal and the second seasonals
-        mean -= phi(l) * phi(6) * (y(T + h - order(l) - order(6)) - as_scalar(x.row(T + h - order(l) - order(6)) * beta));
       }
-      // Next We need to deal with the first order seasonality, and the product between the first and second orders
-      for(int l2 = 3; l2 < 6; ++l2){
-        mean += phi(l2) * (y(T + h - order(l2)) - as_scalar(x.row(T + h - order(l2)) * beta));
-        mean -= phi(l2) * phi(6) * (y(T + h - order(l2) - order(6)) - as_scalar(x.row(T + h - order(l2) - order(6)) * beta));
+      for(int l = 3; l < order.n_elem; ++l){
+        mean += phi(l) * (y(T + h - order(l)) - as_scalar(x.row(T + h - order(l)) * beta));
       }
-      // Finally include the second order seasonality
-      mean += phi(6) * (y(T + h - order(6)) - as_scalar(x.row(T + h - order(6)) * beta));
       
       for(int l = 2; l > 0; --l){
         ylag(l) = ylag(l - 1);
       }
       ylag(0) = mean;
       for(int m = 0; m < M; ++m){
-        density(m, h-1) += 1.0 / sqrt(2 * 3.14159 * fcVar(h - 1, hh, ki)) * exp(-pow(support(m) - mean, 2) / (2 * fcVar(h-1, hh, ki))) * pkNorm(ki);
+        density(m, h-1) += pkNorm(ki) / sqrt(2 * 3.14159 * fcVar(h - 1, hh, ki)) * exp(-pow(support(m) - mean, 2) / (2 * fcVar(h-1, hh, ki)));
       }
     }
   }
   
-  return Rcpp::List::create(Rcpp::Named("density") = density,
-                            Rcpp::Named("pk") = pkNorm);
+  return density;
   
 }
 
@@ -961,76 +839,51 @@ Rcpp::List forecastStandard (vec y, mat x, cube theta, vec order, vec priorK, cu
 // so ylag cycles through \hat{y}_{t-i} for i = 1, 2, 3 
 // fcVar is the AR model prediction variance as a function of sigma^2 and the non-seasonal AR components, can be calculated ahead of time.
 // [[Rcpp::export]]
-Rcpp::List forecastHF(vec y, mat x, mat thetaC, cube thetaD, cube fcVar, vec order, double pS1prior, vec priorK, vec support, int Tn, bool var){
+mat forecastHF(vec y, mat x, mat thetaC, cube thetaD, cube fcVar, vec order, vec pS1prior, vec pkNorm, vec support, bool var){
   int M = support.n_elem;
   int H = fcVar.n_rows;
-  int K = priorK.n_elem;
+  int K = pkNorm.n_elem;
   int T = y.n_rows - H - 1;
   mat density(M, H, fill::zeros);
-  vec pk(K), pkNorm(K), ps(K);
-  double pS1posterior;
   // Evaluate p(k_i = j) and p(S_T = 1)
+  // Forecast each model, skip ones with zero probability
   for(int ki = 0; ki < K; ++ki){
-    vec probs = probSKHF(y(span(0, T)), x.rows(0, T), thetaD.slice(ki), thetaC.col(ki), order, pS1prior, priorK(ki), Tn, var);
-    pk(ki) = probs(0);
-    ps(ki) = probs(1);
-  }
-  // Normalise the weights
-  double maxP = max(pk);
-  for(int ki = 0; ki < K; ++ki){
-    pk(ki) -= maxP;
-  }
-  pkNorm = exp(pk) / sum(exp(pk));
-  pS1posterior = as_scalar(pkNorm.t() * ps);
-  // Forecast each model
-  for(int ki = 0; ki < K; ++ki){
-    double pS1FC = pS1posterior;
-    vec beta, phi, ylag = {y(T), y(T-1), y(T-2)};
-    int hh = 0;
-
-    for(int h = 1; h <= H; ++h){
-      pS1FC = pS1FC * (1 - thetaC(3, ki)) + (1 - pS1FC) * thetaC(2, ki);
-      if(var){
-        int hh = (T + h) % 48; 
-      }
-      beta = thetaD.slice(ki)(span(1, 9), hh);
-      phi = thetaD.slice(ki)(span(10, 16), hh);
+    if(pkNorm(ki) > 0){
+      double pS1FC = pS1prior(ki);
+      vec beta, phi, ylag = {y(T), y(T-1), y(T-2)};
+      int hh = 0;
       
-      double mean = as_scalar(x.row(T + h) * beta);
-      
-      // Deal with any AR terms containing the non-seasonal AR components
-      for(int l = 0; l < 3; ++l){
-        mean += phi(l) * (ylag(l) - as_scalar(x.row(T + h - order(l)) * beta));
-        // Seasonal components that are the product of non-seasonal and first seasonal, and the triple product between all three components
-        // Products between two components have a negative sign, but the triple product is positive again.
-        for(int l2 = 3; l2 < 6; ++l2) {
-          mean -= phi(l) * phi(l2) * (y(T + h - order(l) - order(l2)) - as_scalar(x.row(T + h - order(l) - order(l2)) * beta));
-          mean += phi(l) * phi(l2) * phi(6) * (y(T + h - order(l) - order(l2) - order(6)) - as_scalar(x.row(T + h - order(l) - order(l2) - order(6)) * beta));
+      for(int h = 1; h <= H; ++h){
+        pS1FC = pS1FC * (1 - thetaC(3, ki)) + (1 - pS1FC) * thetaC(2, ki);
+        if(var){
+          hh = (T + h) % 48; 
         }
-        // The product between the nonseasonal and the second seasonals
-        mean -= phi(l) * phi(6) * (y(T + h - order(l) - order(6)) - as_scalar(x.row(T + h - order(l) - order(6)) * beta));
-      }
-      // Next We need to deal with the first order seasonality, and the product between the first and second orders
-      for(int l2 = 3; l2 < 6; ++l2){
-        mean += phi(l2) * (y(T + h - order(l2)) - as_scalar(x.row(T + h - order(l2)) * beta));
-        mean -= phi(l2) * phi(6) * (y(T + h - order(l2) - order(6)) - as_scalar(x.row(T + h - order(l2) - order(6)) * beta));
-      }
-      // Finally include the second order seasonality
-      mean += phi(6) * (y(T + h - order(6)) - as_scalar(x.row(T + h - order(6)) * beta));
-      
-      for(int l = 2; l > 0; --l){
-        ylag(l) = ylag(l - 1);
-      }
-      ylag(0) = mean;
-      for(int m = 0; m < M; ++m){
-        density(m, h-1) += (pS1FC / sqrt(2 * 3.14159 * fcVar(h - 1, hh, ki)) * exp(-pow(support(m) - mean, 2) / (2 * fcVar(h-1, hh, ki))) + 
-          (1 - pS1FC) / sqrt(2 * 3.14159 * exp(thetaC(0, ki))) * exp(-pow(support(m) - thetaC(1, ki), 2) / (2 * exp(thetaC(0, ki))))) * pkNorm(ki);
+        beta = thetaD.slice(ki)(span(1, x.n_cols), hh);
+        phi = thetaD.slice(ki)(span(1 + x.n_cols, x.n_cols + order.n_elem), hh);
+        
+        double mean = as_scalar(x.row(T + h) * beta);
+        
+        // Deal with any AR terms containing the non-seasonal AR components
+        for(int l = 0; l < 3; ++l){
+          mean += phi(l) * (ylag(l) - as_scalar(x.row(T + h - order(l)) * beta));
+        }
+        for(int l = 3; l < order.n_elem; ++l){
+          mean += phi(l) * (y(T + h - order(l)) - as_scalar(x.row(T + h - order(l)) * beta));
+        }
+        
+        
+        for(int l = 2; l > 0; --l){
+          ylag(l) = ylag(l - 1);
+        }
+        ylag(0) = mean;
+        for(int m = 0; m < M; ++m){
+          density(m, h-1) += (pS1FC / sqrt(2 * 3.14159 * exp(thetaC(0, ki))) * exp(-pow(support(m) - thetaC(1, ki), 2) / (2 * exp(thetaC(0, ki)))) +
+            (1 - pS1FC) / sqrt(2 * 3.14159 * fcVar(h - 1, hh, ki)) * exp(-pow(support(m) - mean, 2) / (2 * fcVar(h-1, hh, ki)))) * pkNorm(ki);
+        }
       }
     }
   }
   
-  return Rcpp::List::create(Rcpp::Named("density") = density,
-                            Rcpp::Named("pk") = pkNorm,
-                            Rcpp::Named("ps") = pS1posterior);
+  return density;
   
 }

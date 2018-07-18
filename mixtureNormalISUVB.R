@@ -17,7 +17,7 @@ initialBatch <- 10
 updateSize <- 10
 batches <- (T - initialBatch) / updateSize + 1
 data <- seq(initialBatch, T, length.out = batches)
-MCsamples <- 500
+MCsamples <- 100
 
 mu <- rnorm(2, 0, 0.25)
 sigmaSq <- runif(2, 1, 2)

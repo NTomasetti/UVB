@@ -22,6 +22,7 @@
 \newcommand{\hlkwc}[1]{\textcolor[rgb]{0.333,0.667,0.333}{#1}}%
 \newcommand{\hlkwd}[1]{\textcolor[rgb]{0.737,0.353,0.396}{\textbf{#1}}}%
 \let\hlipl\hlkwb
+\hbadness=99999
 
 \usepackage{framed}
 \makeatletter
@@ -109,7 +110,7 @@
 \IfFileExists{upquote.sty}{\usepackage{upquote}}{}
 \IfFileExists{upquote.sty}{\usepackage{upquote}}{}
 
-\title{Updating Variational Bayes for Online Inference and Forecasting of Smart Meter Data}
+\title{Updating Variational Bayes for Online Inference of Time Series Data}
 \author{Nathaniel Tomasetti 
 \and Catherine Forbes
 \and Anastasios Panagiotelis}
@@ -125,37 +126,24 @@
 \begin{itemize}
 \item Many time-series have data observed in an online setting, where additional information becomes available regularly
 \item We extend variational bayes, a popular technique for approximate bayesian inference, to online data by the bayesian updating recurrence.
-\item The approximation accuracy and runtime of VB, UVB and exact MCMC based inference are compared for several simulated datasets
-\item UVB is applied to online inference of smart meter data, where the high dimensionality and frequency of observations prohibits the use of MCMC.
-\item This allows us to build a model that incorporates household heterogeneity for probabilistic forecasts of short term electricity demand.
-\item The results improve on a homogeneous model by X\%.
+\item Existing online VB all assumed that data is iid so we can subsample in minibatches to form gradient estimates.
+\item This allows online learning with time dependence in the data
+\item We make it faster in IS-UVB and show a speed / performance trade-off
+\item The approximation accuracy and runtime of VB, UVB, and IS-UVB are compared to `exact' MCMC based inference are compared for several simulated datasets
+\item We show the marginal posteriors for the eight schools problem of \cite{Gelman2014} (BDA 3)
 \end{itemize}
-The paper is arrange as follows
-\begin{enumerate}
-\item Overview of Variational Bayes
-\item The proposed extension to Updating Variational Bayes
-\item An importance sampler to trade accuracy and runtime
-\item A few simulated data studies
-\item The electricity forecasting
-\end{enumerate}
-
-Aims:
+The paper is arranged as follows
 \begin{itemize}
-\item VB Updating to infer a posterior distribution in an online data setting
-\item Computational Efficiency for intractable models
-\item Explore approximation error for UVB and VB - Compare different q distributions
-\item Show performance on simulated data sets
-\item Apply to short term load forecasting with smart meter data
+\item Section 2: Overview of Variational Bayes
+\item Section 3: The proposed extension to Updating Variational Bayes
+\item Section 4: An importance sampler to trade accuracy and runtime
+\item Section 5: A few simulated data studies
+\item Section 6: The schools example
+\item Section 7: Discussion
 \end{itemize}
 
-Related Literature
-\begin{itemize}
-\item Kalman Filters, Extended Kalman Filters, Unscented Filter
-\item Particle Filters
-\item Varitional Bayesian Filtering: Vermaak, Lawrence \& Perez 2003, Smidl 2006, Jin \& Mokhtarian 2007, Smidl \& Quinn 2008
-\item Streaming Variational Bayes - Broderick et al. 2013
-\item The entirety of the STLF literature
-\end{itemize}
+
+
 
 \section{Bayesian Inference}
 \label{sec:Inference}
@@ -221,6 +209,17 @@ The score gradient estimator of \citet{Ranganath2014} is utilised in this paper,
 \end{equation}
 where $\theta_{j} \sim q_{\lambda}(\theta | y_{1:T})$.
 
+\subsection{Online Variational Bayes}
+\label{subsec:OnlineVB}
+\begin{itemize}
+\item Online VB has existed for almost as long as VB
+\item For the first 15 years or so, it focused on MFVB
+\item The exponentional familiy restrictions make an update in the MFVB context very simple, if problem specific (note: Almost every MFVB paper has problem specific derivations, there isn't any global online MFVB paper, though \cite{Broderick2013} comes closest).
+\item Data sub-samples in `mini-batches' for gradient calculations has been around for a long time in the neural network literature, so this was adopted quickly into the stochastic VB literature.
+\item This means that we just calculate $N$ (size of minibatch) log-likelihood terms per iteration, and scale the gradient estimate by the data size / N.
+\item This is unbiased if the data is independent, which is violated in time series data
+\end{itemize}
+
 \section{Updating Variational Bayes}
 \label{sec:UVB}
 
@@ -264,7 +263,7 @@ UVB then involves the recursive use of $q_{\lambda_n}(\theta | y_{1:T_n})$ at ea
 \label{UVB:pHatPosterior}
 \hat{p}(\theta |  y_{1:T_{n+1}}) \propto p(y_{T_{n}+1:T_{n+1}} | \theta)q_{\lambda_{n}}.(\theta | y_{1:T_{n}}).
 \end{equation}
-As the right hand side of this update is analytically tractable, standard ELBO gradient optimisation methods discussed in Section \ref{subsec:SVB} may be applied to find  
+As the right hand side of this update is analytically tractable, standard ELBO gradient optimisation methods discussed in Section \ref{subsec:SGA} may be applied to find  
 \begin{equation}
 \label{UVB:TimeNp1}
 q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}}) = \arg \underset{q}{\min} \hspace{1mm} KL[q_{\lambda_{n+1}} (\theta | y_{1:T_{n+1}}) \hspace{.1cm}||\hspace{.1cm}\hat{p}(\theta | y_{1:T_{n+1}})].
@@ -282,51 +281,74 @@ A summary of the UVB algorithm is given by Algorithm \ref{alg:UVB}.
  \Input{Prior, Likelihood.}
  \KwResult{Approximating distribution at $T_N$.}
  Observe $y_{1:T_1}$\;
- Use (\ref{scoreDeriv}) to construct $q_{\lambda_1}(\theta | y_{1:T_1})$\;
- \For{$n \mbox{ in } 2, \ldots, N$}{
-   Observe $y_{T_{n-1}+1:T_n}$\;
-   Use $q_{\lambda_{n-1}}(\theta | y_{1:T_{n-1}})$ and (\ref{scoreDeriv}) to construct $q_{\lambda_n}(\theta | y_{1:T_n})$.
+ Use (\ref{scoreDeriv}) to choose the $\lambda_1$ that minimises the KL divergence from $q_{\lambda_1}(\theta | y_{1:T_1})$ to $p(\theta | y_{1:T_1})$ \;
+ \For{$n \mbox{ in } 1, \ldots, N-1$}{
+   Observe next data $y_{T_{n}+1:T_{n+1}}$\;
+   Use $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$ and (\ref{scoreDeriv}) to choose the $\lambda_{n+1}$ that minimises the KL divergence from $q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})$ to $\hat{p}(\theta | y_{1:T_{n+1}})$ 
   }
  \caption{Updating Variational Bayes}
   \label{alg:UVB}
 \end{algorithm}
 
+\section{Importance Sampled UVB} 
+\label{sec:UVBIS}
 
-
-\section{UVB Importance Sampling} \label{sec:IS}
-
-The increasing approximation error introduced by UVB could be offset by an importance sampling correction at each $T_n$. Importance sampling allows an expectation with respect to the true posterior $p(\theta | y_{1:T_n})$ to be evaluated using samples drawn from some proposal distribution, such as the VB $q_{\lambda_n}(\theta | y_{1:T_n})$, See (citation) for an overview. The importance sampler reweights particles $\theta^{(1)}, \dots, \theta^{(M)}$ from $q_{\lambda_n}(\theta | y_{1:T_n})$ to form 
-\begin{equation}
-\label{IS:Approx}
-p^*(\theta | y_{1:T_n}) = \sum_{i=1}^M w^{(i)}_{T_n} \delta(\theta^{(i)})
-\end{equation}
-with weights given by
-\begin{align}
-\hat{w}^{(i)}_{T_n} &= \frac{p(\theta^{(i)}, y_{1:T_n})}{q(\theta^{(i)} | y_{1:T_n})} \label{IS:Weights} \\
-w^{(i)}_{T_n} &= \frac{\hat{w}^{(i)}_{T_n}}{\sum_{i=1}^M \hat{w}^{(i)}_{T_n}} \label{IS:WeightsNorm}
-\end{align}
-\\
-Setting $M$ to be a large value can make the approximation error arbitarily small, so an imporance sampled VB approximation (VB-IS) or UVB approximation (UVB-IS) allows the user to trade compuational time with approximation accuracy.
+UVB has significant computational cost savings as it reduces the likelihood from a product of $T_{n+1}$ terms to a product of only $T_{n+1} - T_n$ terms. However, in each iteration of the gradient ascent algorithm the distribution the $\theta$ samples are drawn from, $q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})$, changes and hence $\theta$ must be resampled. The result of this is that the likelihood must be calculated at each iteration with these new samples. 
 \\
 
-If intermediate values $y_{T_n+h}, h = 1, 2, \dots, T_{n+1} - T_{n} - 1$, are observed, the importance sample approximation can be updated in a Sequential Monte Carlo (SMC, \cite{Doucet2000}) fashion without the need of a new UVB approximation by updating the weights via
-\begin{align}
-\hat{w}^{(i)}_{T_n+h} &= \frac{p(\theta^{(i)}, y_{1:T_n+h})}{q(\theta^{(i)} | y_{1:T_n})} \nonumber \\
-&= \frac{p(y_{T_n+h} | \theta^{(i)})p(\theta^{(i)}, y_{1:T_n+h-1)}}{q(\theta^{(i)} | y_{1:T_n})} \nonumber \\
-&= p(y_{T_n+h} | \theta^{(i)}) \hat{w}^{(i)}_{T_n+h-1}, \label{IS:UpdateWeights}
-\end{align}
-and
+In the update to $T_{n+1}$ we have access to a similar distribution $q_{\lambda_n}(\theta | y_{1:T_n})$. This is constant at $T_{n+1}$, and hence importance samples gradient estimates that use this distribution as a proposal do not require us to resample $\theta$. By only using a single set of $\theta$ samples, and not re-calculating the likelihood each iteration, we can introduce substantial speed-ups to optimisation.
+\\
+
+Recall the score ELBO gradient for UVB,
 \begin{equation}
-\label{IS:UpdateWeightsNorm}
-w^{(i)}_{T_n+h} = \frac{\hat{w}^{(i)}_{T_n+h}}{\sum_{i=1}^M \hat{w}^{(i)}_{T_n+h}}.
+\label{UVBIS:scoreGrad}
+\frac{\partial\mathcal{L}(q, \lambda_{n+1})}{\partial \lambda_{n+1}} = \int_{\theta} q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}}) \frac{\partial \log(q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}}))}{\partial \lambda_{n+1}} \log \left(\frac{\hat{p}(y_{1:T_{n+1}}, \theta)}{q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})} \right) d\theta.
 \end{equation}
-to yield
+We can multiply and divide this by $q_{\lambda_n}(\theta | y_{1:T_n})$ to write this as an expectation with respect to the previous UVB distribution at time $T_n$:
 \begin{equation}
-\label{IS:ApproxUpdate}
-p^*(\theta | y_{1:T_n+h}) = \sum_{i=1}^M w^{(i)}_{T_n+h} \delta(\theta^{(i)}).
+\label{UVBIS:scoreGradIS}
+\frac{\partial\mathcal{L}(q, \lambda_{n+1})}{\partial \lambda_{n+1}} = \int_{\theta} q_{\lambda_{n}}(\theta | y_{1:T_{n}})\frac{q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})}{q_{\lambda_{n}}(\theta | y_{1:T_{n}})} \frac{\partial \log(q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}}))}{\partial \lambda_{n+1}} \log \left(\frac{\hat{p}(y_{1:T_{n+1}}, \theta)}{q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})} \right) d\theta,
+\end{equation}
+and estimate this via
+\begin{equation}
+\label{UVBIS:scoreEstIS}
+\widehat{\frac{\partial\mathcal{L}(q, \lambda_{n+1})}{\partial \lambda_{n+1}}}_{IS} = \frac{1}{M} \sum_{i=1}^M w(\theta^{(i)})\frac{\partial \log(q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}}))}{\partial \lambda_{n+1}} \log \left(\frac{\hat{p}(y_{1:T_{n+1}}, \theta^{(i)})}{q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}})} \right),
+\end{equation}
+where $\theta \sim q_{\lambda_{n}}(\theta | y_{1:{T_n}})$ and 
+\begin{equation}
+w(\theta^{(i)}) = \frac{q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}})}{q_{\lambda_{n}}(\theta^{(i)} | y_{1:T_{n}})}.
 \end{equation}
 
-Repeated SMC updates often exhibit weight decay, where the values of each $w^{(i)}_{T_n+h}$ except one approaches zero, reducing the effective sample size of the approximation. This can be alleviated in the UVB setting by sampling a fresh set of particles from $q_{\lambda_n}(\theta | y_{1:T_n})$ when the distribution becomes available.
+Each iteration we just need to re-calculate $\frac{\partial \log(q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}}))}{\partial \lambda_{n+1}}$ and $q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}})$ as $\lambda$ changes.
+\\
+
+This is referred to as `IS-UVB', and is given by Algorithm \ref{alg:UVBIS}.
+\\
+
+
+Importance sampling VB gradients isn't a completely new idea, \citet{Sakaya2017} have an approach where the same set of samples and log-likelihood values are used for multiple sequential iterations, until $\lambda$ changes too much and the effective sample size of the weights drops. In the UVB case, if the marginal information about $\theta$ contained in data from $T_n$ to $T_{n+1}$ is relatively small, the converged $\lambda_{n+1}$ will not be too different from $\lambda_n$ so weight instability is avoided.
+\\
+
+The variance of this estimator is increased relative to the score gradient estimator in (\ref{scoreDeriv}) due to the presence of the importance sampling weights. This increased variance can resulting in less accurate approximations, as the algorithm stopping criteria, a sufficiently small value of $|\mathcal{L}(q, \lambda^{(m)}) - \mathcal{L}(q, \lambda^{(m-1)})|$ between gradient ascent iterations $m$ and $m-1$, is only evaluated as a noisy estimate also using the importance sampler. As the computation per iteration is extremely small we can set $N$ to be very large to compensate, allowing the user to set the trade-off between computation time approximation accuracy to suit themselves.
+\\
+
+\vspace{2mm}
+\begin{algorithm}[H]
+ \SetKwInOut{Input}{Input}
+ \Input{Prior, Likelihood.}
+ \KwResult{Approximating distribution at $T_N$.}
+ Observe $y_{1:T_1}$\;
+ Use (\ref{scoreDeriv}) to choose the $\lambda_1$ that minimises the KL divergence from $q_{\lambda_1}(\theta | y_{1:T_1})$ to $p(\theta | y_{1:T_1})$\;
+ \For{$n \mbox{ in } 1, \ldots, N-1$}{
+    Observe $y_{T_{n}+1:T_{n+1}}$\;
+   Sample $\theta \sim q_{\lambda_{n}}(\theta | y_{1:T_{n}})$\; 
+   Calculate $p(y_{T_{n}+1:T_{n+1}} | \theta)$ and $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$ for these samples\;
+  Use (\ref{UVBIS:scoreEstIS}) to choose the $\lambda_{n+1}$ that minimises the KL divergence from $q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})$ to $\hat{p}(\theta | y_{1:T_{n+1}})$.\;
+  }
+ \caption{Importance Sampled UVB}
+  \label{alg:UVBIS}
+\end{algorithm}
+
 
 \iffalse
 \section{Approximation Error}
@@ -442,23 +464,18 @@ where $I(\cdot)$ is the indicator function, which equals one if the argument is 
 \section{Simulation Results}
 \label{sec:UVBSim}
 
-In this section the approximation error for repeated UVB applications is compared relative to both SVB inference and exact inference implemented by MCMC for two simple problems: Time Series Forecasting and Mixture Model Clustering.
+The approximation error for repeated UVB and Importance Sampled UVB (IS-UVB) applications is compared relative to both SVB inference and exact inference implemented by RWMH-MCMC for two simple problems: Time Series Forecasting and Mixture Model Clustering.
 
 \subsection{Time Series Forecasting}
 \label{subsec:UVBTS}
 
-500 datasets $y_{1:300}$ are simulated according to the following AR3 model,
+500 datasets $y_{1:500}$ are simulated according to the following AR3 model,
 \begin{equation}
 \label{UVB:TSAR3}
 y_t = \mu + \phi_1 (y_{t-1} - \mu) + \phi_2 (y_{t-2} - \mu) + \phi_3 (y_{t-3} - \mu) + e_t
 \end{equation}
 where $e_t \sim N(0, \sigma^2)$. 
-The parameters are collected as 
-\begin{equation}
-\label{UVB:TStheta}
-\theta = \{\log(\sigma^2), \mu, \phi_1, \phi_2, \phi_3 \},
-\end{equation}
-and inference is faciliated by the use of the vague prior
+The parameters are $\theta = \{\log(\sigma^2), \mu, \phi_1, \phi_2, \phi_3 \}$, with the prior
 \begin{equation}
 \label{UVB:TSprior}
 \theta \sim N(\boldsymbol{0}, 10 \mathbb{I})
@@ -466,16 +483,16 @@ and inference is faciliated by the use of the vague prior
 where $\boldsymbol{0}$ denotes the zero vector and $\mathbb{I}$ denotes the identity matrix.
 \\
 
-In each simulation, $\mu$ and each $\phi$ are initially drawn from a $N(\boldsymbol{0}, \mathbb{I})$ distribution, accepting only draws where each $\phi$ lies in the AR3 stationary region. $\sigma^{-2}$ is simulated from a $G(5, 5)$ distribution.
+In each simulation, $\mu$ and each $\phi$ are drawn from a $N(0, 1)$ distribution, accepting only draws where each $\phi$ lies in the AR3 stationary region. $\sigma^{-2}$ is simulated from a $G(5, 5)$ distribution.
 \\
 
-At each time $t = 100, 101, \ldots, 300$, the MCMC posterior distribution $p(\theta | y_{1:t})$ is simulated by 15000 draws from a Random Walk Metropolis Hastings MCMC algorithm, discarding the first 10000 as a burn in period.
+At each time $t = 100, 101, \ldots, 300$, the MCMC posterior distribution $p(\theta | y_{1:t})$ is simulated by 15000 draws from a RWMH-MCMC algorithm, discarding the first 10000 as a burn in period.
 \\
 
-VB and UVB approximations, $q_{VB}(\theta | y_{1:T_n})$ and $q_{UVB}(\theta | y_{1:T_n})$ respectively, are fit at each time $T_n = 75 + 25n$ for $n = 1, 2, \ldots 9$. In the case of VB, each approximation is fit from randomised starting values, while with UVB each approximation at $n > 1$ uses the converged values $\lambda_{n-1}$ from the previous update as a starting point. In each case, the distributional family for $q$ is chosen to be a $K = 1, 2$, or $3$ component mixture of multivariate normal distributions.
+SVB, UVB, and IS-UVB approximations, $q_{VB}(\theta | y_{1:T_n})$, $q_{UVB}(\theta | y_{1:T_n})$, and $q_{IS-UVB}(\theta | y_{1:T_n})$ respectively, are fit at each time $T_n = 75 + 25n$ for $n = 1, 2, \ldots 17$. In each case, the distributional family for $q$ is chosen to be a $K = 1, 2$, or $3$ component mixture of multivariate normal distributions.
 \\
 
-We further apply importance sampler corrections following Section \ref{sec:IS} for each $t = 100, 101, \ldots, 300$, these are referred to as VB-IS and UVB-IS respectively for VB and UVB approximations utilised as the initial proposal distributions.
+SVB and UVB use the score gradient estimator calculated from $M = 25$ $\theta$ samples per iteration, while IS-UVB is ran with 100 $\theta$ samples re-used between iterations.
 \\
 
 Given the posterior, or its approximation, the forecast distribution for $y_{T_n+h}$ is given by
@@ -494,24 +511,25 @@ The loss function associated with this value is given by $L(n, h)$ and is measur
 L(n, h) = \log(p(y_{T_n + h} | y_{1:T_n})).
 \end{equation}
 
-We make one step ahead forecast distributions after each observation and each simulated dataset using exact MCMC inference and each approximation method: VB, UVB, VB-IS and UVB-IS, and plot the approximate logscore minus the exact logscore in the left panel of Figure (\ref{fig:UVBAR3Timing}). While each approximation has a lower logscore compared to exact inference, there is no significant error associated with the use of UVB instead of standard VB.
+One step ahead forecast distributions are made for each inferential method: MCMC, SVB, UVB and IS-UVB. Each approximate inference technique is evaluated by its predictive logscore. The results are displayed in Figure \ref{fig:UVBAR3Timing}, where the left panel displayed the mean logscore for each method after observation up to $T_n = 100, 125, \ldots, 500$ across the 500 simulations. While each approximation has a lower logscore compared to exact inference, there is little realised loss in logscore resulting from using IS-UVB over SVB, however UVB performs better than both methods.
 \\
 
-The right panel displayed the mean runtime for a singular VB or VB-IS fit after observation of data up until time $T_n$, compared to the mean runtime for UVB and UVB-IS first fit to time $T_1$, and updated $n-1$ times to $T_n$, with a shaded 50\% interval. The cumulative runtime of UVB is greater than VB, however it benefits by being able to provide an approximating distribution from $T_1$ onwards, while VB must wait until all data is observed at time $T_n$ to begin optimisation. We find no significant difference between each approximation method in terms of logscore or elapsed time for $K = 1, 2 $ or $3$ component mixture distributions employed as approximations.   
+The right panel displayed the mean runtime for a singular SVB fit with data up to $T_n$, compared to the mean runtime for UVB and IS-UVB fit to $T_1$ and updated $n-1$ times to $T_n$, relative to the time taken for the initial fit. In this scenario, the amount of data is small and the computational cost of calculating the log-likelihood is low, so UVB is slower than SVB. However, UVB benefits by being able to provide an approximating distribution from $T_1$ onwards, while SVB must wait until all data is observed at time $T_n$ to begin optimisation. IS-UVB is significantly faster than either alternative. There is no significant difference between $K = 1, 2 $ or $3$.   
 
-\begin{figure}%
+\begin{figure}[htbp]
     \centering
     {{\includegraphics[width=7cm, height = 6cm]{figures/AR3ls} }}%
     \qquad
     {{\includegraphics[width=7cm, height = 6cm]{figures/AR3timing} }}%
-    \caption{Left: Average difference between forecast logscores between approximate inferences and MCMC. Right: Average VB runtime for one approximation at time $T_n$ and average cumulative UVB runtime for each $T_1, T_2, \ldots, T_n$. There is little difference in each methods logscore, and running UVB $n$ times is slightly slower than running VB once at time $T_n$, however UVB can be ran as data arrives instead of waiting for all available data to be observed.}%
+    \caption{Left: Average predictive logscores for each inference technique. Right: Average SVB runtime for one approximation at time $T_n$ and average cumulative UVB and IS-UVB runtimes fit to $T_1$, then updated $n-1$ times to $T_n$. Runtimes are relative to the time required for the $T_1$ fit.
+UVB performs better than SVB but is slower, while IS-UVB performs worse but is faster. Both UVB and IS-UVB can begin optimisation as data arrives rather than waiting for all data to be observed.}%
     \label{fig:UVBAR3Timing}%
 \end{figure}
 
 \subsection{Mixture Model Clustering}
 \label{subsec:UVBMMC}
 
-Consider the two component mixture normal model for $i = 1, \ldots N$ and $t = 1, \ldots, T_n$  augmenting each unit $i$ with an auxiliary variables $k_i$ such that
+The two component mixture normal model for $i = 1, \ldots N$ and $t = 1, \ldots, T_n$ is considered, augmented each unit $i$ with an auxiliary variables $k_i$ such that
 \begin{equation}
 \label{UVB:MMCmixNormalDGP2}
 y_{i, t} | k_i = j \sim  N(\mu_j, \sigma^2_{j}).
@@ -522,35 +540,38 @@ with
 k_i | \pi \sim Bin(1, \pi).
 \end{equation}
 
-Collecting the parameters of interest as
-\begin{equation}
-\label{UVB:MMCtheta}
-\theta = \{\log(\sigma^2_1), \log(\sigma^2_2), \mu_1, \mu_2 \},
-\end{equation}
-and using the vague priors
+Collecting $\theta = \{\log(\sigma^2_1), \log(\sigma^2_2), \mu_1, \mu_2 \}$, the prior for $\theta$ is given by
 \begin{align}
 \theta \sim N(\boldsymbol{0}, 10 \mathbb{I}), \\
 \pi_1 \sim Beta(\alpha, \beta). \label{UVB:MMCpiPriorMix}
 \end{align}
-we consider posterior inference on $p(\theta | y_{1:N, 1:T_n})$ where $y_{1:N, 1:T_N} = \{y_i, 1:T_n | i = 1, 2, \dots, N\}$. This requires the marginalisation of the full posterior $p(\theta, \pi, k_{1:N} | y_{1:N, 1:T_n})$ by first noting (\ref{UVB:MMCkPrior}) and (\ref{UVB:MMCpiPriorMix}) implies that
+
+
+Note that (\ref{UVB:MMCkPrior}) and (\ref{UVB:MMCpiPriorMix}) imply that 
 \begin{equation}
 \label{UVB:MMCkMarginalMix}
 p(k_i = j) = \frac{\mathcal{B}(j + \alpha, \beta - j + 1)}{\mathcal{B}(\alpha, \beta)}
 \end{equation}
-where $\mathcal{B}(\cdot, \cdot)$ denotes the Beta function, and marginalising over each $k_i$,
+where $\mathcal{B}(\cdot, \cdot)$ denotes the Beta function.
+\\
+
+Denoting $y_{i, 1:T_n} = \{y_{i, t} | t = 1, \ldots, T_n\}$ and $y_{1:N, 1:T_n} = \{y_{i, 1:T_n} | i = 1, \ldots N \}$, the posterior distribution can then be marginalised over the values of each $k_i$,
 \begin{equation}
 \label{UVB:MMCMarginal}
 p(\theta | y_{1:N, 1:T_n}) \propto p(\theta) \prod_{i=1}^N \left( \sum_{j=1}^2 p(y_{i, 1:T_n} | \theta, k_i = j) p(k_i = j) \right)
 \end{equation}
-This distribution is approximated by employing distributions $q_{\lambda}(\theta | y_{1:N, 1:T_n})$ as either a $K = 1, 2,$ or $3$ component mixture of multivariate normal distributions. 
+This is approximated by employing distributions $q_{\lambda}(\theta | y_{1:N, 1:T_n})$ as either a $K = 1, 2,$ or $3$ component mixture of multivariate normal distributions. 
 \\
 
-This posterior approximation can be updated i,f at each time $T_{n+1}$, the marginalisation in (\ref{UVB:MMCMarginal}) can be applied to form the psuedo-posterior
+As in Section \ref{subsec:UVBTS}, SVB and UVB use the score gradient estimator calculated from $M = 25$ $\theta$ samples per iteration, while IS-UVB is ran with 100 $\theta$ samples re-used between iterations.
+\\
+
+This posterior approximation can be updated if at each time $T_{n+1}$ the marginalisation in (\ref{UVB:MMCMarginal}) can be applied as
 \begin{equation}
 \label{UVB:MMCUpdate}
-\hat{p}(\theta | y_{1:T_{n+1}}) \propto q_{\lambda_{n}}(\theta | y_{i, 1:T_{n}}) \prod_{i=1}^N \left( \sum_{j=1}^2 p(y_{i, T_n+1:T_{n+1}} | \theta, k_i = j) p(k_i = j | y_{1:T_n}) \right).
+\hat{p}(\theta | y_{1:T_{n+1}}) \propto q_{\lambda_{n}}(\theta | y_{i, 1:T_{n}}) \prod_{i=1}^N \left( \sum_{j=1}^2 p(y_{i, T_n+1:T_{n+1}} | \theta, k_i = j) p(k_i = j | y_{1:T_n}) \right)
 \end{equation}
-This requires marginal posterior distributions $p(k_i | y_{i, 1:T_{n}})$, which we replace with the psuedo-marginal,
+This requires the marginal posterior distributions $p(k_i | y_{i, 1:T_{n}})$, which can be  approximately evaluated by
 \begin{align}
 \hat{p}(k_i | y_{i, 1:T_{n}}) &= \int_{\theta} p(k_i | y_{i, 1:T_{n}}, \theta)q_{\lambda_{n}}(\theta | y_{i, 1:T_{n}}) d\theta \nonumber \\
 &\propto \int_{\theta} p(y_{i, 1:T_n} | \theta, k_i) p(k_i) q_{\lambda_{n}}(\theta | y_{i, 1:T_{n}}) d\theta \nonumber \\
@@ -561,127 +582,126 @@ where $\theta^{(m)} \sim q_{\lambda_{n}}(\theta | y_{i, 1:T_{n}})$ for $m = 1, 2
 
 This distribution is also used to predict classes for each unit as
 \begin{equation}
-\hat{k}_i = \arg \underset{j}{\max}\mbox{ } p(k_i = j | y_{i, 1:T_n}).
+\hat{k}_i = \arg \underset{j}{\max}\mbox{ } \hat{p}(k_i = j | y_{i, 1:T_n}).
 \end{equation}
 
-The proportion of correct predictions is used to assess the performance of each inference procedure.
+The accuracy of each inferential method in this model is given by the proportion of correct class predictions at each $T_n$.
 \\
 
-500 datasets are simulated with $N = 50$ units of length $T = 100$. For each $T_n = 10n, n = 1, 2, \ldots, 10$, we infer the posterior distribution $p(\theta, k_1, \ldots, k_N | y_{1:N, 1:T_n})$ using each of MCMC, VB, UVB, VB-IS and UVB-IS. Data is simulated by drawing each $\mu$ from an $N(0, 0.25)$ distribution and each $\sigma^2$ from a $U(1, 2)$ distribution. Units are randomly allocated to each group with $50\%$ probability. 
+500 datasets are simulated with $N = 100$ units of length $T = 100$, and the posterior distribution $p(\theta, k_1, \ldots, k_N | y_{1:N, 1:T_n})$ is inferred for each $T_n = 10n, n = 1, 2, \ldots, 10$ using each inferential method: MCMC, SVB, UVB, and IS-UVB. Data is simulated by drawing each $\mu$ from an $N(0, 0.25)$ distribution and each $\sigma^2$ from a $U(1, 2)$ distribution. Units are randomly allocated to each group with $50\%$ probability. 
 \\
 
-The results are displayed in Figure (\ref{fig:UVBMMCResults}), where in the left panel UVB outperforms VB in terms of correct cluster allocations relative to MCMC. In the right panel the mean runtime of $n$ UVB updates is compared relative to a single SVB, where UVB is significantly faster. The value of $K$ does not have a significant impact, and importance sampling does not improve results.
+The results are displayed in Figure \ref{fig:UVBMMCResults}, where breaking the data into smaller pieces benefits the accuracy of the UVB and IS-UVB posteriors, and hence cluster allocation score in the left panel. This problem features a large amount of data, and the computational cost of calculating the log-likelihood over the entire sample required by SVB slows optimisation relative to UVB and IS-UVB which process smaller amounts of data, shown in the right panel. The value of $K$ does not have a significant impact.
 
-\begin{figure}%
+\begin{figure}[htbp]
     \centering
     {{\includegraphics[width=7cm, height = 6cm]{figures/mixNormScore} }}%
     \qquad
     {{\includegraphics[width=7cm, height = 6cm]{figures/mixNormTiming} }}%
-    \caption{Left: Average difference between proportion of correct classifications between approximate inferences and MCMC. Right: Average SVB runtime for one approximation at time $T_n$ and average cumulative UVB runtime for each $T_1, T_2, \ldots, T_n$. In this scenario the large amount of data significantly slows SVB fits and degrades the gradient ascent optimisation relative to UVB.}%
+    \caption{Left: Average proportion of correct classifications for each inference method. Right: Average SVB runtime for one approximation at time $T_n$ and average cumulative UVB and IS-UVB runtimes fit to $T_1$, then updated $n-1$ times to $T_n$. Runtimes are relative to the time required for the $T_1$ fit.    
+UVB and IS-UVB perform better than SVB and are significantly faster, as computation of the data likelihood is a large part of the gradient calculation in this scenario.}%
     \label{fig:UVBMMCResults}%
 \end{figure}
 
+\section{Eight Schools Example}
 
-\section{Smart Meter Forecasting}
-
-A popular area of application for forecasting methodology is in short term electricity load forecasting (STLF), where forecasts for up to a day ahead are required. This literature traditionally uses a regions aggregate load at a given point in time as the time series to be forecasted, but the recent proliferation in smart meter data has caused increased interest in per household level forecasts. 
+In this section we consider the `Eight Schools' problem from \citet{Gelman2014}, where data from students' results on the SAT-V, a standardised highschool test in the USA, is collected to determine the effectiveness of SAT coaching programs ran by each of eight schools. 
 \\
 
-Smart meter data introduces multiple challenges to STLF: the time series dynamics are muted at the household level and replaced by a large amount of stochastic noise, and these households can display heterogeneous behaviours. Further, there are significant computational challenges associated with the number of smart meters to forecast often being in the thousands.
+For each school $j = 1, 2, \ldots, 8$ it is assumed that an individual student's coaching effect, $y_{i, j}, i = 1, 2, \dots n_j$ is distributed with unknown mean $\theta_j$ and known variance $\sigma^2$, which is estimated by the sample variance.
 \\
 
-(Citations) have found that clustering households into groups of similar behaviour, and creating a model for each behaviour type can help alleviate the difficulties in heterogeneity.
+Due to the Central Limit Theorem \citep{Casella2002} the per school sample means,
+\begin{equation}
+\label{schools:mean}
+\bar{y}_j = \frac{1}{n_j} \sum_{i=1}^{n_j} y_{i, j}
+\end{equation}
+are asymptotically distributed according to
+\begin{equation}
+\label{schools:CLT}
+\bar{y}_{j} \sim \mathcal{N}(\theta_j, \sigma^2_j)
+\end{equation}
+where
+\begin{equation}
+\label{schools:var}
+\sigma_j^2 = \frac{\sigma^2}{n_j}.
+\end{equation}
+\citet{Gelman2014} apply a hierarchical model, where the data is distributed according to (\ref{schools:CLT}) and each unknown variable $\theta_j$ is distributed according to the generalised student's t distribution,
+\begin{equation}
+\label{schools:hier}
+\theta_j \sim t(\mu, \tau, \nu)
+\end{equation}
+where $\mu$ is a location parameter, $\tau$ is a scale parameter, and $\nu$ is the degrees of freedom, fixed at $\nu = 4$. Each $\theta_j$ is assumed to be conditionally independent of each other $\theta_i$ and $y_{1:n_i, i}, i \neq j$, given $\mu$ and $\tau$. 
 \\
 
-Despite the prevalence of noise in the individual data, the models used for this data are largely similar to the aggregate load forecasting literature, where a mix of machine learning methods, such as neural networks and support vector machines have been used alongside arima and exponential smoothing time series models and semi-parametric spline models.
+\citet{Gelman2014} also employ the hyper-prior
+\begin{equation}
+\label{schools:hyperprior}
+p(\mu, \tau) \propto 1.
+\end{equation}
+
+Collecting $\theta^* = \{\theta_1,  \ldots, \theta_8, \mu, \log(\tau)\}$ and $\textbf{y}_{j} = \{y_{i, j} \hspace{2mm}| \hspace{2mm} i = 1,\ldots n_j\}$, the posterior distribution $p(\theta^* | \textbf{y}_{1:8})$ is given by
+\begin{equation}
+\label{schools:posterior}
+p(\theta^* | \textbf{y}_{1:8}) \propto  p(\mu, \tau) \prod_{j=1}^8 \mathcal{N}(\bar{y}_j | \theta_j, \sigma^2_j) t(\theta_j | \tau, \mu, \nu).
+\end{equation}
+
+MCMC posterior samples are generated according to the algorithm provided by Stan, \citep{RStanGettingStarted}, and is compared to each of SVB, UVB, and IS-UVB.
 \\
 
-Machine Learning models and semi-parametrics are supported by their strength in modelling non-linear relationships between load, lags of load, and exogeneous variables such as temperature, humidity, or other weather conditions and time of day/week/year effects. It is widely agreed that temperature effects improve forecasts, even with the added problem of forecasting the temperature. Details on temperature forecasts are rare, but BoM one day forecasts are used by Rob Hyndman regularly. In households with both air-conditioning and heating, the temperature-load relationship is V shaped with a minimum at 18.3 C.
+Each variational algorithm follows \citet{Kucukelbir2017} and uses a multivariate normal distribution $q(\theta^* | \textbf{y}_{1:8})$. In the case of UVB and IS-UVB, each update increases the number of schools included by one, using the posterior decomposition
+\begin{equation}
+\label{schools:update}
+p(\theta_1:m, \mu, \tau | \textbf{y}_{1:m}) \propto p(\textbf{y}_m | \theta_m)p(\theta_m | \mu, \tau)p(\theta_{1:m-1}, \mu, \tau | \textbf{y}_{1:m-1})
+\end{equation}
+for $m = 2, \ldots 8$.
 \\
 
-Models are typically used to provide point estimates evaluated by MAPE, but density forecasts are becoming more popular, with quantile regression, scenario simulation + residual bootstraps, and conditional kernel density estimation employed, evaluated by MAPE, CRSP, or visually comparing ex-ante and ex-post densities. Bayesian models are rare but not completely absent.
+\begin{figure}[htbp]
+\centering
+\includegraphics[width = 0.9\textwidth]{figures/schools}
+\caption{Marginal posterior distributions for each variable using each of MCMC, SVB, UVB and IS-UVB. No variational approach is clearly better than the others, and each marginal distribution for $\tau$ is inaccurate, possibly due to the impliclit lognormal approximation begin unsuitable.}
+\label{fig:schools}
+\end{figure}
+
+The resulting marginal posterior distributions are displayed in Figure \ref{fig:schools}. Each variational approach captures the MCMC samples for $\mu$ well, $\tau$ poorly, and have varying degrees of accuracy for each $\theta_j$. Neither updating method appears to have introduced any discernable error relative to SVB. 
 \\
 
-Half hour frequency data is common (possibly the most common short term forecasting frequency), and it is observed that the time dynamics in electricity data depends strongly on the time of day, with a different parameter set employed per half hour period.
+It is likely that the normal approximation for $\log(\tau)$, and implicit log-normal distribution for $\tau$, is not suitable for this distribution.
+
+\section{Discussion}
+\label{sec:UVBSummary}
+
+In this paper Updating Variational Bayes (UVB) was introduced, a framework that allows online variational inference of data. Online varitional inference has attracted a large amount of attention in the context of Mean Field Variational Bayes (MFVB), see eg. \cite{Hoffman2010} or \cite{Broderick2013}. 
 \\
 
-Our model would differ from the previous literature by:
+UVB differs from these as it is derived from SVB rather than MFVB, and thus can be applied to a larger class of models and approximating distributional families.
+\\
+
+The approach used by UVB is to take the previous VB approximation at time $T_{n-1}$ as a prior distribution to the posterior at time $T_{n}$, which can be significantly faster than re-running SVB using all available data as it reduces the likelihood calculations to contain $T_{n} - T_{n-1}$ terms rather than $T_{n}$ terms in SVB. 
+\\
+
+Online SVB based inference, such as in \citet{Paisley2012}, work by taking sub-samples of the data series, known as `mini-batches', of size $N$ each iteration. This then reduces the likelihood calculation to contain only $N$ terms. Once scaled by a factor of $T_{n} / N$,  this gradient estimate is unbiased if the data is statistically independent. However, time series data commonly violates the independence assumption and mini-batch approaches to optimisation fail. UVB does not require independence and hence can be applied to time-series data.  
+\\
+
+UVB was extended into IS-UVB in Section \ref{sec:UVBIS}, which further reduces the computation time of each update by re-using the $\theta$ samples and likelihood calculations between iterations.
+\\
+
+Two simulation studies are presented in Section \ref{sec:UVBSim}, which demonstrates that UVB outperforms SVB in each problem, in terms of forecasting logscore or cluster allocation accuracy. In the time-series forecasting application, where the total amount of data is relatively small, fitting SVB to all observations up to time $T_1$ and the updating this to $T_2, T_3, \ldots, T_n$ via UVB has a runtime simialr to fitting SVB directly to time $T_n$. In the mixture model clustering application gradient calculations are dominated by the larger amount of data, and a time $T_1$ SVB fit followed by UVB updates is significantly faster than a $T_n$ SVB fit at all time-points.
+\\
+
+IS-UVB is shown to be faster than UVB in both problems, with performance in-between SVB and UVB. The IS-UVB gradient estimator has a larger variance than the UVB estimator, which may lead to the stopping criteria at iteration $m$, $|\mathcal{L}(q, \lambda^{(m)} - \mathcal{L}(q, \lambda^{(m-1)})| < \epsilon$ for some small $\epsilon$ , being achieved early due to the noise in the estimates of $\mathcal{L}(q, \lambda^{(m)})$ and $\mathcal{L}(q, \lambda^{(m-1)})$. This may then degrade the quality of the resulting approximate distribution. In practice $M$, the number of $\theta$ samples used in the gradient estimate, may be increased to improve the fit at the cost of computation time.
+\\
+
+Finally, SVB, UVB, and IS-UVB are applied to the Eight Schools problem of \citet{Gelman2014}, where we show that the marginal distributions of each parameter are similar under each variational algorithm.
+\\
+
+UVB is highly suitable to time-series data under the following constraints:
 \begin{enumerate}
-\item Being fully Bayesian (or, at least, approximately).
-\item Employing online inference.
-\item Clustering as part of the model without aggregation.
-\item Considering a mixture of models.
+\item Up to date inference on $\theta$ is required at all times to make an action such as forecasting,
+\item Data arrives rapidly so that the computation of the infernece on $\theta$ has time constraints.
 \end{enumerate}
-
-\subsection{Model}
-
-Half hourly electricity load data is collected from $N = 200$ Smart Meters in London for the period from 01/12/2012 until 31/01/2014. For each household $i = 1, 2, \ldots, N$ and time period $t = 1, 2, \ldots, T$, the raw data $y_{i, t}^*$ is measured in kiloWatt Hours per half-hour period. This is non-negative and strongly skewed, so it is log transformed via
-\begin{equation}
-\label{elec:logY}
-y_{i, t} = \log(y_{i, t}^* + 0.01)
-\end{equation}
-and modelled with the $K = 3$ component mixture model
-\begin{equation}
-\label{elec:electricityModel}
-p(y_{i, t} | \theta, k_i, y_{i, 1:t-1}) = \sum_{j=1}^K I(k_{i} = j) p_{j}(y_{i, t} | \theta, y_{i, 1:(t-1)})
-\end{equation}
-where $I(\cdot)$ is the indicator function and $k_i = 1, 2, \ldots, K$ is a mixture component indicator.
-\\
-
-The mixture formulation allows the households to cluster into $K$ latent groups with similar dynamic behaviour, as the household electricity consumption may depend strongly on factors such as working and sleeping hours. Clustering smart meter data into groups of households with similar behaviour and then creating a model per group has been shown by (citations) to reduce forecast error by as much as 30\% compared to employing a single model. Typically this clustering is carried out prior to the modelling process however in this application both clustering and parameter estimation are incorporated into a single step with the mixture model (\ref{elec:electricityModel}).
-\\
-
-Each model $j = 1, 2, \ldots, K$ follows a double seasonal \\ ARIMAX $(3, 0, 0)(3, 0, 0)_{48}(1, 0, 0)_{336}$ where the two seasonal components correspond to $48$ observations per day and $336$ observations per week with per-halfhour-period parameters,, given by
-\begin{equation}
-\label{elec:dynamic}
-(1 - \phi_{1, j}^{(h)}L - \phi_{2, j}^{(h)}L^2 - \phi_{3, j}^{(h)} L^3)(1 - \phi_{48, j}^{(h)}L^{48} - \phi_{96, j}^{(h)}L^{96} - \phi_{144, j}^{(h)}L^{144})(1 - \phi_{336, j}^{(h)}L^{336}) (y_{i, t} -  \beta^{\prime, {(h)}}_{j} x_{t}) = \epsilon_{i, t}
-\end{equation}
-where $L$ is the lag operator corresponding to $L^n y_{i, t} = y_{i, t- n}$, $(h)$ denotes the half-hour period of the day at time $t$. $x_{t}$ is a length $9$ vector with a elements corresponding to an intercept, $|Temp^{(c)}_{t} - 18.3|$, where $Temp^{(c)}_{t}$ is the temperature in degrees Celsius, six indicator variables for day of the week, and an indicator variable for public holidays while $\beta_{j}^{(h)}$ is corresponding coefficient vector for that half-hour. Finally $\epsilon_{i, t}$ is modelled with a $N(0, \sigma^{2, (h)}_{j})$ distribution.
-\\
-
-Let $\theta^{(h)}_j = \{\log(\sigma^{2, (h)}_{j}, \beta_{j, 1}^{(h)}, \beta_{j, 2}^{(h)}, \ldots, \beta_{j, 9}^{(h)}, \phi_{1, j}^{(h)}, \phi_{2, j}^{(h)}, \ldots, \phi_{336, j}^{(h)}\}$, the following random walk prior is applied to impose smoothness on the evolution of $\theta^{(h)}_j$ across the 48 half-hour periods each day,
-\begin{align}
-\label{elec:dynamicPrior}
-\theta^{(1)}_j &\sim N(\boldsymbol{0}, \mathbb{I}), \\
-\theta^{(h)}_j &\sim N(\theta^{(h-1)}, 0.1^2 \mathbb{I}) \mbox{ for } h = 2, 3, \ldots, 48.
-\end{align}
-where $\boldsymbol{0}$ is the zero vector and $\mathbb{I}$ is the identity matrix.
-The $K \times 48$ $\theta^{(h)}_j$ vectors are collectively referred to as $\theta$.
-\\
-
-The per household indicator variables $k_i$ are modelled by
-\begin{equation} 
-\label{elec:kConditional}
-k_i \sim Multinomial(\boldsymbol{\pi})
-\end{equation}
-where 
-\begin{equation}
-\label{elec:piPrior}
-\boldsymbol{\pi} \sim Dir(\alpha_1, \alpha_2, \ldots, \alpha_K)
-\end{equation}
-This combination implies that
-\begin{equation}
-\label{elec:kMarginal}
-p(k_i = j) = \frac{\Gamma(\sum_{l=1}^K \alpha_l)}{\Gamma(1 + \sum_{l=1}^K \alpha_l)} \frac{\Gamma(1 + \alpha_j)}{\Gamma(\alpha_j)}.
-\end{equation}
-
-
-Each $k_i$ can be marginalised out of $p(\theta, k_{1:N} | y_{1:N, 1:T_n})$ to form a lower dimensional marginal posterior $p(\theta | y_{1:N, 1:T_n})$ via
-\begin{equation}
-p(\theta | y_{1:N, 1:T_n}) \propto p(\theta)  \prod_{i=1}^N\prod_{t=\tau}^{T_n}\sum_{j=1}^K p(k_i = j)p_{j}(y_{i, t} | \theta, y_{i, 1:t-1})
-\end{equation}
-
-UVB is applied to approximate the posterior distribution $p(\theta | y_{1:N, 1:T_n})$ with a diagonal covariance multivariate Gaussian distribution $q_{\lambda_n}(\theta | y_{1:200, 1:T_n})$, where the time period from the start of the sample until $T_1$ composes of the 2928 half hourly observations for the two month period from 01/12/2012 to 31/01/2013. There are a further 365 updates composing of one day's data, so that $T_366$ is the end of the sample at 31/01/2014. At the end of every update, probabilistic forecasts of the next days electricity consumption at half hourly intervals for each household are made via
-\begin{align}
-p(y_{i, T_n+h} | y_{1:N, 1:T_n}) = \int_{\theta} \sum_{j=1}^K \sum_{m=0}^1 &p(y_{i, T_n+h} | y_{1:N, 1:T_n}, \theta, k_i = j, s_{i, T_n} = m) \nonumber \\
-&\times p(s_{i, T_n} = m | \theta, y_{1:N, 1:T_n}, k_i = j) \nonumber \\
-&\times p(k_i = j | \theta, y_{1:N, 1:T_n}) \nonumber \\
-&\times q_{\lambda_n}(\theta | y_{1:N, 1:T_n}) d\theta 
-\end{align}
-for $h = 1, 2, \ldots, 48$.
-\\
-
-The model is compared to other popular models for this type of data (TBD) and the same model without clustering $(K = 1)$.
+Future work involves the application of UVB to problems that meet this constraints.
 
 \bibliographystyle{asa}
 \bibliography{references}

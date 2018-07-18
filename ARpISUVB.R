@@ -19,13 +19,16 @@ batches <- (T - initialBatch) / updateSize + 1
 data <- c(100, seq(100 + initialBatch, T+100, length.out = batches))
 
 lags <- 3
-MCsamples <- 500
+MCsamples <- 50
 
 dim <- 2 + lags
 priorMean <- rep(0, dim)
 priorVar <- diag(10, dim)
 priorVarInv <- solve(priorVar)
 priorLinv <- solve(t(chol(priorVar)))
+
+for(rep in 1:10){
+  
 
 set.seed(rep)
 
@@ -62,12 +65,10 @@ for(K in 1:3){
               rnorm(dim*K, -1, 0.1),
               rep(1, K))
   
-  
-  
   VBfit <- matrix(0, length(lambda), batches)
   for(t in 1:batches){
-    print(paste(K, t))
-    startVB <- Sys.time()
+    print(paste(rep, K, t))
+    start <- Sys.time()
     # VB Fits
     if(t == 1){
       VB <- fitVBScore(data = x[(data[1]+1 - lags):data[t+1]],
@@ -116,7 +117,10 @@ for(K in 1:3){
       ELBO <- VB$LB[VB$iter - 1]
     }
     
-    endVB <- Sys.time() - startVB
+    endVB <- Sys.time() - start
+    if(attr(endVB, 'units') == 'mins'){
+      endVB <- endVB * 60
+    }
     VBTotal <- VBTotal + as.numeric(endVB)
     
     # Draw from VB
@@ -165,9 +169,18 @@ for(K in 1:3){
   }
 }
 
+}
 forecast <- do.call(rbind.data.frame, forecast)
+forecast$N <- 50
+forecast <- rbind(fc2, forecast)
 
-ggplot(forecast) + geom_line(aes(t, runTime, colour = factor(K)))
+forecast %>%
+  group_by(t, K) %>%
+  summarise(ls = mean(ls),
+            runTime = mean(runTime)) %>%
+  gather(var, result, ls, runTime) %>%
+  ggplot() + geom_line(aes(t, result, colour = factor(K))) + facet_wrap(~var, scales = 'free', ncol = 1)
+
 
 
 write.csv(forecast, paste0('results/AR3_', rep, '_IS.csv'), row.names = FALSE)
