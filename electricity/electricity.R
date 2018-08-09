@@ -6,8 +6,8 @@ library(RcppEigen)
 library(rstan)
 source('RFuns.R')
 source('electricity/elecAux.R')
-sourceCpp('electricity/electricityVB.cpp')
-N <- 200
+sourceCpp('electricity/electricityT.cpp')
+N <- 10
 
 y <- readRDS('electricity/elecY.RDS')[,1:N]
 y <- log(y + 0.01)
@@ -22,13 +22,13 @@ for(t1 in 32:92){
   TseqTrain <- c(TseqTrain, 48 * t1)
 }
 
-K <- c(1, 3)
+K <- c(1, 2)
 order <- c(1, 2, 3, 48, 96, 144, 336)
-dim <- 1 + ncol(x) + length(order)
+dim <- 2 + ncol(x) + length(order)
 samples <- 100
 switch <- 1
 k <- 2
-var <- 1
+var <- 0
 batchSize <- 20
 
 results <- list()
@@ -40,7 +40,7 @@ psFull <- array(0, dim = c(N, K[k], length(Tseq)))
 lambda <- NULL
 ## Add K[k] many sets of switching params
 if(switch){
-  lambda <- rep(c(0, 0, 0.1, 0, 0.1), 2*K[k])
+  lambda <- rep(c(0, 0, 0, 0.1, 0, 0.1, 0, 0, 0.1), 2*K[k])
 }
 ## Repeat for Each Dynamic model: Log variance, mean, sarima parameters, temperature coefficient
 ## Generate different random numbers for the mean of each model
@@ -51,11 +51,11 @@ for(ki in 1:K[k]){
 priorPS <- matrix(0.1, K[k], N)
 if(switch){
   priorMean <- array(0, dim = c(dim, K[k], 2))
-  priorMean[2,,1] <- log(0.01)
+  priorMean[3,,1] <- log(0.01)
   priorLinv <- array(0, dim = c(dim, dim, 2*K[k]))
   for(ki in 1:K[k]){
-    priorLinv[1:2, 1:2, ki] <- solve(chol(diag(1, 2)))
-    priorLinv[3:4, 1:2, ki] <- solve(chol(diag(1, 2)))
+    priorLinv[1:3, 1:3, ki] <- solve(chol(diag(1, 3)))
+    priorLinv[4:5, 1:2, ki] <- solve(chol(diag(1, 2)))
     priorLinv[,,K[k] + ki] <- solve(chol(diag(1, dim)))
   }
 } else {
@@ -73,7 +73,7 @@ psFull[,,1] <- t(priorPS)
 
 
 fitMat <- matrix(0, length(lambda), length(Tseq))
-for(t in 3:(length(Tseq)-1)){
+for(t in 2:(length(Tseq)-1)){
   print(paste0('t: ', t, ', switch : ', switch, ', k: ', k, ', time: ', Sys.time()))
   
   # Fit model, either via standard VB (t = 2 --> First fit) or updated VB
@@ -229,8 +229,8 @@ for(t in 3:(length(Tseq)-1)){
       fit <- fitVB(data = y[1:Tseq[2],],
                    lambda = lambda,
                    model = elecModel,
-                   dimTheta = (4*switch + dim) * K[k],
-                   S = 50,
+                   dimTheta = (5*switch + dim) * K[k],
+                   S = 10,
                    maxIter = 2000,
                    threshold = 0.05 * N,
                    priorMean = priorMean,
@@ -242,8 +242,8 @@ for(t in 3:(length(Tseq)-1)){
                    x = x[1:Tseq[2],],
                    uniformRho = TRUE,
                    var = FALSE,
-                   switching = switch,
-                   batch = batchSize)
+                   switching = switch)
+                  # batch = batchSize)
     }
 
   } else {

@@ -187,7 +187,7 @@ where $\theta_{j} \sim q_{\lambda}(\theta | y_{1:T})$. The ELBO is equal to the 
 
 \subsection{Stochastic Gradient Ascent}
 \label{subsec:SGA}
-For exponential family likelihood models, $p$, with a factorisable approximation, $q$, the characteristics of the surface of the ELBO can be exploited for optimisation in what is known as Mean Field Variational Bayes \citep{Jordan1999, Ghahramani2000, Wainwright2008}, but for more general distributions the surface of the ELBO and its stochastic estimate are unknown. In this general case, maximisation proceeds by optimising only the auxiliary parameters $\lambda$ for a fixed distribution family $q$ with stochastic gradient ascent.
+For exponential family likelihood models, $p$, with a factorisable approximation, $q$, the characteristics of the surface of the ELBO can be exploited for optimisation in what is known as Mean Field Variational Bayes \citep{Jordan1999, Ghahramani2000a, Wainwright2008}, but for more general distributions the surface of the ELBO and its stochastic estimate are unknown. In this general case, maximisation proceeds by optimising only the auxiliary parameters $\lambda$ for a fixed distribution family $q$ with stochastic gradient ascent.
 \\
 
 SGA repeatedly takes Monte-Carlo estimates of the gradient of the ELBO with respect to $\lambda$, $\partial\mathcal{L}(q, \lambda) / \partial \lambda$, as $\widehat{\partial\mathcal{L}(q, \lambda) / \partial \lambda}$ and applies updates of the form
@@ -209,16 +209,56 @@ The score gradient estimator of \citet{Ranganath2014} is utilised in this paper,
 \end{equation}
 where $\theta_{j} \sim q_{\lambda}(\theta | y_{1:T})$.
 
-\subsection{Online Variational Bayes}
-\label{subsec:OnlineVB}
-\begin{itemize}
-\item Online VB has existed for almost as long as VB
-\item For the first 15 years or so, it focused on MFVB
-\item The exponentional familiy restrictions make an update in the MFVB context very simple, if problem specific (note: Almost every MFVB paper has problem specific derivations, there isn't any global online MFVB paper, though \cite{Broderick2013} comes closest).
-\item Data sub-samples in `mini-batches' for gradient calculations has been around for a long time in the neural network literature, so this was adopted quickly into the stochastic VB literature.
-\item This means that we just calculate $N$ (size of minibatch) log-likelihood terms per iteration, and scale the gradient estimate by the data size / N.
-\item This is unbiased if the data is independent, which is violated in time series data
-\end{itemize}
+\subsection{Online Mean Field Variational Bayes}
+\label{subsec:OnlineMFVB}
+
+Mean Field Variational Bayes applied conjugate-exponential family model results in a set of mean field equations that can be written in the form of 
+\begin{equation}
+\lambda = f(\beta, y_{1:T}) \label{OnlineMFVB:OfflineEq}
+\end{equation}
+where $\beta$ denotes the prior hyperparameters. 
+\\
+
+Let $\lambda_1$ denote the MFVB optimal auxiliary parameters of $q_{\lambda_1}(\theta | y_{1:T_1})$, an approximating distribution chosen to minimise the KL divergence to the posterior after observation of $y_{1:T_1}$, obtained via the application of (\ref{OnlineMFVB:OfflineEq}),
+\begin{equation}
+\lambda_1 = f(\beta, y_{1:T_1}) \label{OnlineMFVB:OnlineEq1}
+\end{equation}
+
+The online MFVB approach first advocated by \cite{Ghahramani2000b} is to treat $\lambda_n$ as an updated form of the prior hyperparameters and re-apply the meanfield equations as
+\begin{align}
+\lambda_{n+1} = f(\lambda_n, y_{T_n+1:T_{n+1}}) \label{OnlineMFVB:OnlineEq2}
+\end{align}
+
+This results in a sequence of MFVB distributions $q_{\lambda_1}(\theta | y_{1:T_1}), q_{\lambda_2}(\theta | y_{1:T_2}), \ldots$ to approximate each of the sequence of posteriors $p(\theta | y_{1:T_1}), p(\theta | y_{1:T_2}), \ldots$.
+\\ 
+
+See \cite{Smidl2004}, \cite{Hoffman2010}, \cite{Wang2011}, \cite{Broderick2013}, and \cite{Kabisa2016} for examples of applications of Online MFVB.
+
+\subsection{Online Stochastic Variational Bayes}
+\label{subsec:OnlineSVB}
+
+The stochastic gradient ascent approach utilised by SVB, where $\partial\mathcal{L}(q, \lambda) / \partial \lambda$ is estimated by $\widehat{\partial\mathcal{L}(q, \lambda) / \partial \lambda}$, will converge to a local maximum for any unbiased gradient estimator (\cite{Robbins1951}, \cite{Bottou1999}, \cite{Bottou2008}).
+\\
+
+Online SVB does not provide an approximate distribution at each of a sequence of time points $T_1, T_2, \ldots$, but allows for SVB inference to be substantially sped up by calculating the likelihood of only a subset of the entire dataset each iteration (\cite{Hoffman2013}, \cite{Titsias2014}).
+\\
+
+If the data $y_{1:T}$ is conditionally independent given $\theta$, the log-likelihood decomposes into the sum
+\begin{equation}
+\label{OnlineSVB:likelihood}
+\log(p(y_{1:T} | \theta)) = \sum_{t=1}^T \log(p(y_t | \theta)).
+\end{equation}
+
+By subsetting $y_{1:T}$ into length $N$ `minibatches', where $N < T$, Online SVB replaces the log-likelihood in the gradient estimates with an unbiased estimator
+\begin{equation}
+\label{OnlineSVB:likelihoodEstim}
+\widehat{\log(p(y_{1:T} | \theta))} = \frac{T}{N} \sum_{t=1}^N \log(p(y_t | \theta))
+\end{equation}
+where the sum in (\ref{OnlineSVB:likelihoodEstim}) is only over components of $y_{1:T}$ that are in the current minibatch. As this is unbiased, the gradients $\widehat{\partial\mathcal{L}(q, \lambda) / \partial \lambda}$ retain their unbiased properties.
+\\
+
+Each iteration of the gradient ascent algorithm should use a different subset of the data, so that sequential iterations cycle through the entire dataset. 
+\\
 
 \section{Updating Variational Bayes}
 \label{sec:UVB}
@@ -281,10 +321,10 @@ A summary of the UVB algorithm is given by Algorithm \ref{alg:UVB}.
  \Input{Prior, Likelihood.}
  \KwResult{Approximating distribution at $T_N$.}
  Observe $y_{1:T_1}$\;
- Use (\ref{scoreDeriv}) to choose the $\lambda_1$ that minimises the KL divergence from $q_{\lambda_1}(\theta | y_{1:T_1})$ to $p(\theta | y_{1:T_1})$ \;
- \For{$n \mbox{ in } 1, \ldots, N-1$}{
+ Use (\ref{scoreDeriv}) to choose the $\lambda_1$ that minimises $KL[q_{\lambda_1}(\theta |y_{1:T_1})\hspace{.1cm}||\hspace{.1cm}p(\theta |y_{1:T_1})]$\;
+ \For{$n \mbox{ in } 2, \ldots, N-1$}{
    Observe next data $y_{T_{n}+1:T_{n+1}}$\;
-   Use $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$ and (\ref{scoreDeriv}) to choose the $\lambda_{n+1}$ that minimises the KL divergence from $q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})$ to $\hat{p}(\theta | y_{1:T_{n+1}})$ 
+   Use $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$ and (\ref{scoreDeriv}) to choose the $\lambda_{n+1}$ that minimises $KL[q_{\lambda_{n+1}}(\theta |y_{1:T_{n+1}})\hspace{.1cm}||\hspace{.1cm}\hat{p}(\theta |y_{1:T_{n+1}})]$
   }
  \caption{Updating Variational Bayes}
   \label{alg:UVB}
@@ -293,10 +333,26 @@ A summary of the UVB algorithm is given by Algorithm \ref{alg:UVB}.
 \section{Importance Sampled UVB} 
 \label{sec:UVBIS}
 
-UVB has significant computational cost savings as it reduces the likelihood from a product of $T_{n+1}$ terms to a product of only $T_{n+1} - T_n$ terms. However, in each iteration of the gradient ascent algorithm the distribution the $\theta$ samples are drawn from, $q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})$, changes and hence $\theta$ must be resampled. The result of this is that the likelihood must be calculated at each iteration with these new samples. 
+UVB has significant computational cost savings as it reduces the likelihood from a product of $T_{n+1}$ terms to a product of only $T_{n+1} - T_n$ terms. \\
+
+The gradient ascent algorithm utilised by UVB to fit $q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})$ maximises the ELBO by repeated application of the following steps:
+\begin{enumerate}
+\item At iteration $m$ draw $\theta^{(1)}, \theta^{(2)}, \ldots, \theta^{(S)}$ from $q_{\lambda_{n+1}^{(m)}}(\theta | y_{1:T_{n+1}})$ \\
+(alternatively draw $\epsilon^{(1)}, \epsilon^{(2)}, \ldots, \epsilon^{(S)}$ from $r(\epsilon)$ and transform with $\theta = f(\epsilon, \lambda^{(m)}_{n+1})$),
+\item Calculate $p(y_{T_{n}+1:T_{n+1}} | \theta)$ for each $\theta = \theta^{(1)}, \theta^{(2)}, \ldots, \theta^{(S)}$ as part of the gradient estimate $\widehat{\frac{\partial\mathcal{L}(q, \lambda_{n+1})}{\partial \lambda_{n+1}}}$,
+\item Update $\lambda_{n+1}^{(m+1)} = \lambda_{n+1}^{(m)} + \rho^{(m)}\widehat{\frac{\partial\mathcal{L}(q, \lambda_{n+1})}{\partial \lambda_{n+1}}} \bigg\rvert_{\lambda_{n+1} = \lambda^{(m)}_{n+1}}$,
+\item Set $m = m + 1$.
+\end{enumerate}
+After each iteration, $\lambda_{n+1}$ changes, and hence $\theta$ must be resamples at step one, and the likelihood must be recalculated with these new samples. 
 \\
 
-In the update to $T_{n+1}$ we have access to a similar distribution $q_{\lambda_n}(\theta | y_{1:T_n})$. This is constant at $T_{n+1}$, and hence importance samples gradient estimates that use this distribution as a proposal do not require us to resample $\theta$. By only using a single set of $\theta$ samples, and not re-calculating the likelihood each iteration, we can introduce substantial speed-ups to optimisation.
+\citet{Sakaya2017} note that calulation of the data likelihood is the most computationally expensive component of the gradient estimate. They propose that the $\theta$ samples used at some iteration $m$ could be re-used for iterations $m + 1, m + 2, \ldots m + h$ to calculate the gradient as an importance sampled estimate. 
+\\
+
+As $\theta$ is constant between iterations, the likelihood does not need to be recalculated and optmisation is sped up. For some $h$ the difference between $q_{\lambda_{n+1}^{(m)}}(\theta | y_{1:T_{n+1}})$ and $q_{\lambda_{n+1}^{(m+h)}}(\theta | y_{1:T_{n+1}})$ becomes large, reducing the effective sample size of the importance sampler weights and degrading the gradient estimate. At this stage \citet{Sakaya2017} resample $\theta$ and recalculate the likelihoods.
+\\
+
+This idea is readily extendable to the UVB context to derive an importance sampled UVB (IS-UVB) gradient estimator.
 \\
 
 Recall the score ELBO gradient for UVB,
@@ -304,12 +360,12 @@ Recall the score ELBO gradient for UVB,
 \label{UVBIS:scoreGrad}
 \frac{\partial\mathcal{L}(q, \lambda_{n+1})}{\partial \lambda_{n+1}} = \int_{\theta} q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}}) \frac{\partial \log(q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}}))}{\partial \lambda_{n+1}} \log \left(\frac{\hat{p}(y_{1:T_{n+1}}, \theta)}{q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})} \right) d\theta.
 \end{equation}
-We can multiply and divide this by $q_{\lambda_n}(\theta | y_{1:T_n})$ to write this as an expectation with respect to the previous UVB distribution at time $T_n$:
+By multipling and dividing this by $q_{\lambda_n}(\theta | y_{1:T_n})$ it can be written as an expectation with respect to the previous UVB distribution at time $T_n$:
 \begin{equation}
 \label{UVBIS:scoreGradIS}
 \frac{\partial\mathcal{L}(q, \lambda_{n+1})}{\partial \lambda_{n+1}} = \int_{\theta} q_{\lambda_{n}}(\theta | y_{1:T_{n}})\frac{q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})}{q_{\lambda_{n}}(\theta | y_{1:T_{n}})} \frac{\partial \log(q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}}))}{\partial \lambda_{n+1}} \log \left(\frac{\hat{p}(y_{1:T_{n+1}}, \theta)}{q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})} \right) d\theta,
 \end{equation}
-and estimate this via
+and estimated via Monte Carlo,
 \begin{equation}
 \label{UVBIS:scoreEstIS}
 \widehat{\frac{\partial\mathcal{L}(q, \lambda_{n+1})}{\partial \lambda_{n+1}}}_{IS} = \frac{1}{M} \sum_{i=1}^M w(\theta^{(i)})\frac{\partial \log(q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}}))}{\partial \lambda_{n+1}} \log \left(\frac{\hat{p}(y_{1:T_{n+1}}, \theta^{(i)})}{q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}})} \right),
@@ -319,17 +375,16 @@ where $\theta \sim q_{\lambda_{n}}(\theta | y_{1:{T_n}})$ and
 w(\theta^{(i)}) = \frac{q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}})}{q_{\lambda_{n}}(\theta^{(i)} | y_{1:T_{n}})}.
 \end{equation}
 
-Each iteration we just need to re-calculate $\frac{\partial \log(q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}}))}{\partial \lambda_{n+1}}$ and $q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}})$ as $\lambda$ changes.
+At each gradient ascent iteration only $\frac{\partial}{\partial \lambda_{n+1}} \log(q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}}))$ and $q_{\lambda_{n+1}}(\theta^{(i)} | y_{1:T_{n+1}})$ need to be recalculated as $\lambda_{n+1}$ updates from $\lambda_{n+1}^{(m)}$ to $\lambda_{n+1}^{(m+1)}$
 \\
 
-This is referred to as `IS-UVB', and is given by Algorithm \ref{alg:UVBIS}.
+In the UVB case, if the marginal information about $\theta$ contained in data from $T_n$ to $T_{n+1}$ is relatively small, the converged $\lambda_{n+1}$ will not be significantly different from $\lambda_n$ and importance sampler weight decay is avoided.
 \\
 
-
-Importance sampling VB gradients isn't a completely new idea, \citet{Sakaya2017} have an approach where the same set of samples and log-likelihood values are used for multiple sequential iterations, until $\lambda$ changes too much and the effective sample size of the weights drops. In the UVB case, if the marginal information about $\theta$ contained in data from $T_n$ to $T_{n+1}$ is relatively small, the converged $\lambda_{n+1}$ will not be too different from $\lambda_n$ so weight instability is avoided.
+The variance of this estimator is increased relative to the score gradient estimator in (\ref{scoreDeriv}) due to the presence of the importance sampling weights. This increased variance can resulting in less accurate approximations, as the algorithm stopping criteria, a sufficiently small value of $|\mathcal{L}(q, \lambda^{(m+1)}) - \mathcal{L}(q, \lambda^{(m)})|$ after iteration $m+1$ is only evaluated as a noisy estimate also using the importance sampler. As the computation per iteration is extremely small we can set $N$ to be very large to compensate, allowing the user to set the trade-off between computation time approximation accuracy to suit their requirements.
 \\
 
-The variance of this estimator is increased relative to the score gradient estimator in (\ref{scoreDeriv}) due to the presence of the importance sampling weights. This increased variance can resulting in less accurate approximations, as the algorithm stopping criteria, a sufficiently small value of $|\mathcal{L}(q, \lambda^{(m)}) - \mathcal{L}(q, \lambda^{(m-1)})|$ between gradient ascent iterations $m$ and $m-1$, is only evaluated as a noisy estimate also using the importance sampler. As the computation per iteration is extremely small we can set $N$ to be very large to compensate, allowing the user to set the trade-off between computation time approximation accuracy to suit themselves.
+IS-UVB is outlined in Algorithm \ref{alg:UVBIS}.
 \\
 
 \vspace{2mm}
@@ -338,17 +393,16 @@ The variance of this estimator is increased relative to the score gradient estim
  \Input{Prior, Likelihood.}
  \KwResult{Approximating distribution at $T_N$.}
  Observe $y_{1:T_1}$\;
- Use (\ref{scoreDeriv}) to choose the $\lambda_1$ that minimises the KL divergence from $q_{\lambda_1}(\theta | y_{1:T_1})$ to $p(\theta | y_{1:T_1})$\;
+ Use (\ref{scoreDeriv}) to choose the $\lambda_1$ that minimises $KL[q_{\lambda_1}(\theta |y_{1:T_1})\hspace{.1cm}||\hspace{.1cm}p(\theta |y_{1:T_1})]$\;
  \For{$n \mbox{ in } 1, \ldots, N-1$}{
     Observe $y_{T_{n}+1:T_{n+1}}$\;
    Sample $\theta \sim q_{\lambda_{n}}(\theta | y_{1:T_{n}})$\; 
    Calculate $p(y_{T_{n}+1:T_{n+1}} | \theta)$ and $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$ for these samples\;
-  Use (\ref{UVBIS:scoreEstIS}) to choose the $\lambda_{n+1}$ that minimises the KL divergence from $q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}})$ to $\hat{p}(\theta | y_{1:T_{n+1}})$.\;
+  Use (\ref{UVBIS:scoreEstIS}) to choose the $\lambda_{n+1}$ that minimises $KL[q_{\lambda_{n+1}}(\theta |y_{1:T_{n+1}})\hspace{.1cm}||\hspace{.1cm}\hat{p}(\theta |y_{1:T_{n+1}})]$
   }
  \caption{Importance Sampled UVB}
   \label{alg:UVBIS}
 \end{algorithm}
-
 
 \iffalse
 \section{Approximation Error}
