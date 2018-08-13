@@ -159,6 +159,7 @@ mat shuffle(mat sobol){
 // priorLinv: A cube, first K slices, first two rows: constant linv, second two rhos: rho linv. Second K slices: dynamic linv
 // order, a vector of the lags of the dynamic model
 // Tn: Size of current batch in terms of T (T is reserved in structures for stan::math::var)
+// priorWeights: priorWeights of prior distribution, prior columns / slices are added as needed. Eg, first K columns for first component, second K for second...
 struct electricitySwitching {
   const mat y;
   const mat x;
@@ -170,8 +171,10 @@ struct electricitySwitching {
   const vec order;
   const int Tn;
   const bool uniformRho;
-  electricitySwitching(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const mat& pS1In, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn, const bool& uRhoin) :
-    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), pS1(pS1In), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), uniformRho(uRhoin)  {}
+  const vec priorWeights;
+  electricitySwitching(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const mat& pS1In, const cube& priorMeanIn, const cube& priorLinvIn, 
+                       const vec& orderIn, const int& TnIn, const bool& uRhoin, const vec& priorWeightsIn ) :
+    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), pS1(pS1In), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), uniformRho(uRhoin), priorWeights(priorWeightsIn) {}
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
     const{
@@ -322,6 +325,7 @@ struct electricitySwitching {
 // priorLinv, a cube of the constant model + rho L inverse (one slice per group) + the dim * 48 theta^H inverses
 // order, a vector of the lags of the dynamic model
 // Tn: Size of current batch in terms of T (T is reserved in structures for stan::math::var)
+// priorWeights: priorWeights of prior distribution, prior columns / slices are added as needed. Eg, first K columns for first component, second K for second...
 struct electricitySwitchingVAR {
   const mat y;
   const mat x;
@@ -333,9 +337,10 @@ struct electricitySwitchingVAR {
   const vec order;
   const int Tn;
   const bool uniformRho;
+  const vec priorWeights;
   electricitySwitchingVAR(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const mat& pS1In, const cube& priorMeanIn, 
-                          const  cube& priorLinvIn, const vec& orderIn, const int& TnIn, const bool& uRhoin) :
-    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), pS1(pS1In), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), uniformRho(uRhoin)  {}
+                          const  cube& priorLinvIn, const vec& orderIn, const int& TnIn, const bool& uRhoin, const vec& priorWeightsIn) :
+    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), pS1(pS1In), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), uniformRho(uRhoin), priorWeights(priorWeightsIn)  {}
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
     const{
@@ -476,9 +481,10 @@ struct electricitySwitchingVAR {
 // x: temperature vector with rows matching y time period
 // epsilon ~ Z
 // probK, prior probability of k_i = j, rows: i, columns: j
-// prior: All of the prior components to deal with, 0: dynamic mean (matrix. one column per dynamic model), 1: dynamic linv (cube)
+// prior: All of the prior components to deal with
 // order, a vector of the lags of the dynamic model
 // Tn: Size of current batch in terms of T (T is reserved in structures for stan::math::var)
+// priorWeights: priorWeights of prior distribution, prior columns / slices are added as needed. Eg, first K columns for first component, second K for second...
 struct electricityStandard{
   const mat y;
   const mat x;
@@ -488,8 +494,9 @@ struct electricityStandard{
   const cube priorLinv;
   const vec order;
   const int Tn;
-  electricityStandard(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn) :
-    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn)  {}
+  const vec priorWeights;
+  electricityStandard(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn, const vec& priorWeightsIn) :
+    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), priorWeights(priorWeightsIn) {}
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
     const{
@@ -498,6 +505,7 @@ struct electricityStandard{
     int K = probK.n_rows; // Number of dynamic models
     int numPars = 1 + x.n_cols + order.n_elem; // Parameters = Logvar, mean, beta + order parameters
     int lambdaPerK = numPars * (numPars + 1); // Size of parameter vector for each dynamic model
+    int mix = priorWeights.n_elem; // number of components of prior distribution
     
     // Create theta for the j'th dynamic model, rows: Different parameters, cols: Different models
     T logdetJ = 0, prior = 0, logLik = 0;
@@ -517,19 +525,29 @@ struct electricityStandard{
       }
     }
     
-    // Evaluate log(p(theta)), starting with log(var)_c, mu_c ~ N
-    // Add the dynamic model priors, each independent normal (not identitcal)
-    Matrix<T, Dynamic, Dynamic> kernelDyn (numPars, K);
-    kernelDyn.fill(0);
+    // Evaluate log(p(theta))
+    // prior is a mixture of block diagonal normals (independence between different Ks)
+    vec dets(mix, fill::ones);
+    Matrix<T, Dynamic, 1> priorComp(mix);
+    priorComp.fill(0);
     
-    for(int k = 0; k < K; ++k){
-      for(int i = 0; i < numPars; ++i){
-        for(int j = 0; j <= i; ++j){
-          kernelDyn(i, k) += (theta(j, k) - priorMean(j, k, 0)) * priorLinv(i, j, k);
+    for(int m = 0; m < mix; ++m){
+      Matrix<T, Dynamic, Dynamic> kernelDyn (numPars, K);
+      kernelDyn.fill(0);
+      for(int k = 0; k < K; ++k){
+        for(int i = 0; i < numPars; ++i){
+          for(int j = 0; j <= i; ++j){
+            kernelDyn(i, k) += (theta(j, k) - priorMean(j, k, m)) * priorLinv(i, j, K*m + k);
+          }
+          dets(m) *= priorLinv(i, i, K*m + k);
+          priorComp(m) += - 0.5 * pow(kernelDyn(i, k), 2);
         }
-        prior += - 0.5 * pow(kernelDyn(i, k), 2);
       }
+      prior = prior + priorWeights(m) * dets(m) * exp(priorComp(m));
     }
+    prior = log(prior);
+    
+  
     
     // Calculate the log likelihood
     // Starting point is tau, will be part way through the data as the first data points are lags.
@@ -574,6 +592,7 @@ struct electricityStandard{
 // prior Linv, a 48*48*(K*17) cube. Slice 17*k + d is the L inverse matrix for the prior of the 48 elements of theta_d,k
 // order, a vector of the lags of the dynamic model
 // Tn: Size of current batch in terms of T (T is reserved in structures for stan::math::var)
+// priorWeights: priorWeights of prior distribution, prior columns / slices are added as needed. Eg, first K columns for first component, second K for second...
 struct electricityStandardVAR{
   const mat y;
   const mat x;    
@@ -583,8 +602,9 @@ struct electricityStandardVAR{
   const cube priorLinv;
   const vec order;
   const int Tn;
-  electricityStandardVAR(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn) :
-    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn)  {}
+  const vec priorWeights;
+  electricityStandardVAR(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn, const vec& priorWeightsIn) :
+    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), priorWeights(priorWeightsIn)  {}
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
     const{
@@ -593,6 +613,7 @@ struct electricityStandardVAR{
     int K = probK.n_rows; // Number of dynamic models
     int dim = 1 + x.n_cols + order.n_elem;
     int numPars = 48 * dim; // Parameters = Logvar, mean, beta + order parameters
+    int mix = priorWeights.n_elem; // number of components of prior distribution
     
     // Create theta for the j'th dynamic model, rows: Different parameters, cols: Different models
     T logdetJ = 0, prior = 0, logLik = 0;
@@ -613,17 +634,29 @@ struct electricityStandardVAR{
     // Each L inverse is a banded matrix, containing terms only in the diagonal and row immediately below the diagonal.
     // So we only need to evaluate two columns per row instead of the whole lower triangle of the matrix.
     // In updates it is diagonal
-    for(int k = 0; k < K; ++k){
-      for(int d = 0; d < dim; ++d){
-        for(int i = 0; i < 48; ++i){
-          T kernelDyn = 0;
-          for(int j = max(0, i-1); j <= i; ++j){
-            kernelDyn += (theta(48*d + j, k) - priorMean(d, j, k)) * priorLinv(i, j, dim*k + d);
+    // Evaluate log(p(theta))
+    // prior is a mixture of block diagonal normals (independence between different Ks)
+    vec dets(mix, fill::ones);
+    Matrix<T, Dynamic, 1> priorComp(mix);
+    priorComp.fill(0);
+    
+    for(int m = 0; m < mix; ++m){
+      for(int k = 0; k < K; ++k){
+        for(int d = 0; d < dim; ++d){
+          for(int i = 0; i < 48; ++i){
+            T kernelDyn = 0;
+            for(int j = max(0, i-1); j <= i; ++j){
+              kernelDyn += (theta(48*d + j, k) - priorMean(d, j, m*K + k)) * priorLinv(i, j, m * dim * K + dim*k + d);
+            }
+            priorComp(m) += -0.5 * pow(kernelDyn, 2);
+            dets(m) *= priorLinv(i, i, m * dim * K + dim * k + d);
           }
-          prior += - 0.5 * pow(kernelDyn, 2);
         }
       }
+      prior += priorWeights(m) * dets(m) * exp(priorComp(m));
     }
+    prior = log(prior);
+    
     // Calculate the log likelihood
     // Starting point is tau, will be part way through the data as the first data points are lags.
     int tau = y.n_rows - Tn;
@@ -657,7 +690,7 @@ struct electricityStandardVAR{
 };
 
 // [[Rcpp::export]]
-Rcpp::List elecModel(mat y, Rcpp::NumericMatrix lambdaIn, vec epsilon, mat x, mat probK, cube priorMean, cube priorLinv, vec order,
+Rcpp::List elecModel(mat y, Rcpp::NumericMatrix lambdaIn, vec epsilon, mat x, mat probK, cube priorMean, cube priorLinv, vec order, vec priorWeights,
                      int Tn, mat ps1, bool uniformRho = true, bool switching = false, bool var = false) {
   Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
   double eval;
@@ -666,21 +699,21 @@ Rcpp::List elecModel(mat y, Rcpp::NumericMatrix lambdaIn, vec epsilon, mat x, ma
   // Autodiff
   if(switching){
     if(var){
-      electricitySwitchingVAR p(y, x, epsilon, probK, ps1, priorMean, priorLinv, order, Tn, uniformRho);
+      electricitySwitchingVAR p(y, x, epsilon, probK, ps1, priorMean, priorLinv, order, Tn, uniformRho, priorWeights);
       stan::math::set_zero_all_adjoints();
       stan::math::gradient(p, lambda, eval, gradP);
     } else {
-      electricitySwitching p(y, x, epsilon, probK, ps1, priorMean, priorLinv, order, Tn, uniformRho);
+      electricitySwitching p(y, x, epsilon, probK, ps1, priorMean, priorLinv, order, Tn, uniformRho, priorWeights);
       stan::math::set_zero_all_adjoints();
       stan::math::gradient(p, lambda, eval, gradP);
     }
   } else {
     if(var){
-      electricityStandardVAR p(y, x, epsilon, probK, priorMean, priorLinv, order, Tn);
+      electricityStandardVAR p(y, x, epsilon, probK, priorMean, priorLinv, order, Tn, priorWeights);
       stan::math::set_zero_all_adjoints();
       stan::math::gradient(p, lambda, eval, gradP);
     } else {
-      electricityStandard p(y, x, epsilon, probK, priorMean, priorLinv, order, Tn);
+      electricityStandard p(y, x, epsilon, probK, priorMean, priorLinv, order, Tn, priorWeights);
       stan::math::set_zero_all_adjoints();
       stan::math::gradient(p, lambda, eval, gradP);
     }

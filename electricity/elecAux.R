@@ -53,29 +53,42 @@ updatePrior <- function(fit, var, switch, K, dim){
   }
 }
 
-sampleTheta <- function(update, samples, var, switch, K, dim, statVars){
+sampleTheta <- function(update, samples, var, switch, K, dim, statVars, weights = NULL){
   tDynFull <- array(0, dim = c(dim, ifelse(var, 48, 1), K, samples))
   tConsFull <- array(0, dim = c(4, K, samples))
   fcVar <- array(0, dim = c(48, ifelse(var, 48, 1), K, samples))
   
-  updateMean <- update$updateMean
-  updateL <- update$updateL
-  updateLinv <- update$updateLinv
-  
-  if(switch){
-    for(i in 1:samples){
+  for(i in 1:samples){
+    if(is.null(weights)){
+      updateMean <- update$updateMean
+      updateL <- update$updateL
+      updateLinv <- update$updateLinv
+      if(var){
+        updateSd <- update$updateSd
+      }
+    } else {
+      #sample from mixture
+      u <- runif(1)
+      sumW <- cumsum(weights)
+      group <- min(which(u <= sumW))
+      updateMean <- update[[group]]$updateMean
+      updateL <- update[[group]]$updateL
+      updateLinv <- update[[group]]$updateLinv
+      if(var){
+        updateSd <- update[[group]]$updateSd
+      }
+    }
+    
+    if(switch){
       for(ki in 1:K){
         tConsFull[1:2, ki, i] <- updateMean[1:2, ki, 1] + updateL[1:2, 1:2, ki] %*% rnorm(2)
         tConsFull[3:4, ki, i] <- 1 / (1 + exp(-(updateMean[3:4, ki, 1] + updateL[3:4, 1:2, ki] %*% rnorm(2))))
       }
     }
-  }
-
-  if(var){
-    updateSd <- update$updateSd
-    for(i in 1:samples){
+    
+    if(var){
       for(ki in 1:K){
-   
+        
         theta <- updateMean[,,ki]  + updateSd[,,ki] *  matrix(rnorm(48 * dim), ncol = 48)
         
         for(j in 1:48){
@@ -102,38 +115,36 @@ sampleTheta <- function(update, samples, var, switch, K, dim, statVars){
           fcVar[, j, ki, i] <- ltsa::PredictionVariance(autocov, 48)
         }
         tDynFull[,, ki, i] <- theta
-      } 
-    }
-  } else {
-    for(i in 1:samples){
+      }
+    } else {
       theta <- matrix(0, dim, K)
-       for(ki in 1:K){
-          theta[, ki] <- updateMean[,ki, 1 + switch] + updateL[,,K * switch + ki] %*% rnorm(dim)
-    
-          root <- polyroot(c(1, -theta[statVars, ki]))
-          if(any(Mod(root) < 1)){
-            stat <- FALSE
-            try <- 0
-            while(!stat){
-              theta[, ji] <- updateMean[,ki, 1 + switch] + updateL[,,K * switch + ki] %*% rnorm(dim)
-              root <- polyroot(c(1, -theta[statVars, ki]))
-              try <- try + 1
-              if(all(Mod(root) > 1)){
-                stat <- TRUE
-              } else if(try > 10 & i > 1){
-                theta[statVars, j] <- tDynFull[statVars, 1, ki, i-1]
-                stat <- TRUE
-              } else if(try > 10 & i == 1){
-                theta[statVars, j] <- 0
-                stat <- TRUE
-              }
+      for(ki in 1:K){
+        theta[, ki] <- updateMean[,ki, 1 + switch] + updateL[,,K * switch + ki] %*% rnorm(dim)
+        
+        root <- polyroot(c(1, -theta[statVars, ki]))
+        if(any(Mod(root) < 1)){
+          stat <- FALSE
+          try <- 0
+          while(!stat){
+            theta[, ji] <- updateMean[,ki, 1 + switch] + updateL[,,K * switch + ki] %*% rnorm(dim)
+            root <- polyroot(c(1, -theta[statVars, ki]))
+            try <- try + 1
+            if(all(Mod(root) > 1)){
+              stat <- TRUE
+            } else if(try > 10 & i > 1){
+              theta[statVars, j] <- tDynFull[statVars, 1, ki, i-1]
+              stat <- TRUE
+            } else if(try > 10 & i == 1){
+              theta[statVars, j] <- 0
+              stat <- TRUE
             }
           }
-          autocov <- ltsa::tacvfARMA(theta[statVars, ki], sigma2 = exp(theta[1, ki]), maxLag = 48)
-          fcVar[,1, ki, i] <- ltsa::PredictionVariance(autocov, 48)
-          tDynFull[,1,ki,i] <- theta[,ki]
-       }
-     }
+        }
+        autocov <- ltsa::tacvfARMA(theta[statVars, ki], sigma2 = exp(theta[1, ki]), maxLag = 48)
+        fcVar[,1, ki, i] <- ltsa::PredictionVariance(autocov, 48)
+        tDynFull[,1,ki,i] <- theta[,ki]
+      }
+    }
   }
   return(list(tDynFull = tDynFull,
               tConsFull = tConsFull,
