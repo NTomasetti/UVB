@@ -1,5 +1,4 @@
 library(tidyverse)
-library(lubridate)
 library(Rcpp)
 library(RcppArmadillo)
 library(RcppEigen)
@@ -25,7 +24,8 @@ for(t1 in 32:92){
 K <- 2
 mix <- 2
 order <- c(1, 2, 3, 48, 96, 144, 336)
-dim <- 1 + ncol(x) + length(order)
+ma <- 3
+dim <- 1 + ncol(x) + length(order) + ma
 samples <- 100
 switch <- 0
 var <- 0
@@ -107,6 +107,7 @@ for(t in 2:(length(Tseq)-1)){
                           uniformRho = TRUE,
                           var = FALSE,
                           switching = switch,
+                          ma = ma,
                           batch = batchSize)
         } else {
           updatePriors <- list()
@@ -141,7 +142,8 @@ for(t in 2:(length(Tseq)-1)){
                                  order = order,
                                  prior = priorProbK[ki, j],
                                  T = TseqTrain[t1-1] - TseqTrain[1],
-                                 var = FALSE)
+                                 var = FALSE,
+                                 ma = ma)
                   updateProbK[ki,j] <- updateProbK[ki,j] + probs / samples
                 }
               }
@@ -182,6 +184,7 @@ for(t in 2:(length(Tseq)-1)){
                           uniformRho = FALSE,
                           var = FALSE,
                           switching = switch,
+                          ma = ma,
                           batch = batchSize)
           
           
@@ -240,7 +243,7 @@ for(t in 2:(length(Tseq)-1)){
                       maxIter = 2000,
                       mix = mix,
                       weightsZ = fit$weights,
-                      threshold = 0.05 * N,
+                      threshold = 0.1 * N,
                       priorMean = priorMean,
                       priorLinv = priorLinv,
                       priorWeights = 1,
@@ -252,32 +255,35 @@ for(t in 2:(length(Tseq)-1)){
                       uniformRho = TRUE,
                       var = TRUE,
                       switching = switch,
+                      ma = ma,
                       batch = batchSize)
       saveRDS(fit, 'varInitialFit.RDS')
       fitMat <- matrix(0, length(lambdaVar), length(Tseq))
       
     } else {
-      fit <- fitVB(data = y[1:Tseq[2],],
-                   lambda = lambda,
-                   model = elecModel,
-                   dimTheta = (5*switch + dim) * K,
-                   S = 10,
-                   mix = mix,
-                   weightsZ = rep(1, mix),
-                   maxIter = 2000,
-                   threshold = 0.05 * N,
-                   priorMean = priorMean,
-                   priorLinv = priorLinv,
-                   priorWeights = 1,
-                   probK = priorProbK, 
-                   ps1 = priorPS,
-                   order = order,
-                   Tn = Tseq[2] - Tseq[1],
-                   x = x[1:Tseq[2],],
-                   uniformRho = TRUE,
-                   var = FALSE,
-                   switching = switch)
-      # batch = batchSize)
+      fit <- fitVBMix(data = y[1:Tseq[2],],
+                      lambda = lambda,
+                      model = elecModel,
+                      dimTheta = (4*switch + dim) * K,
+                      S = 15,
+                      mix = mix,
+                      weightsZ = weightsZ,
+                      maxIter = 2000,
+                      threshold = 0.1 * N,
+                      priorMean = priorMean,
+                      priorLinv = priorLinv,
+                      priorWeights = 1,
+                      probK = priorProbK, 
+                      ps1 = priorPS,
+                      order = order,
+                      Tn = Tseq[2] - Tseq[1],
+                      x = x[1:Tseq[2],],
+                      uniformRho = TRUE,
+                      var = FALSE,
+                      switching = switch,
+                      ma = ma,
+                      batch = batchSize)
+      saveRDS(fit, 'electricity/ireland/armaModel.RDS')
     }
     
   } else {
@@ -297,7 +303,7 @@ for(t in 2:(length(Tseq)-1)){
                  dimTheta = (4*switch + ifelse(var, 48, 1) * dim) * K,
                  S = 50,
                  maxIter = 2000,
-                 threshold = 0.05 * N,
+                 threshold = 0.1 * N,
                  priorMean = updateMean,
                  priorLinv = updateLinv,
                  probK = updateProbK, 
@@ -323,7 +329,7 @@ for(t in 2:(length(Tseq)-1)){
   # 3) Calculate updated priors for p(k) and p(s) to be pushed into the next update
   # 4) Evaluate forecast densities
   # Steps 1) and 2) are handled in c++
-  support <- seq(log(0.009), max(y[Tseq[t-1]:Tseq[t],]) + sd(y[Tseq[t-1]:Tseq[t],]), length.out = 5000)
+  support <- seq(log(0.009), max(y[Tseq[t-1]:Tseq[t],]) + sd(y[Tseq[t-1]:Tseq[t],]), length.out = 2000)
   
   updateProbK <- matrix(0, K, N)
   updateProbS1 <- matrix(0, K, N)
@@ -412,37 +418,13 @@ for(t in 2:(length(Tseq)-1)){
       results[[t-1]] <- df
     }
   }
-  if(any(round(colSums(updateProbK), 5) != 1)){
-    break
-    print('check pk')
-  }
-  
+
   pkFull[,,t] <- t(updateProbK)
   psFull[,,t] <- t(updateProbS1)
   
   #print(qplot(rowSums(pkFull[,,t])))
   saveRDS(list(fitMat, pkFull, updateProbS1, results, t), 'elecFitSw.RDS')
 }
-
-support <- list(seq(1.2, 1.6, length.out = 1000),
-                seq(-0.5, 0.5, length.out = 1000),
-                seq(-0.1, 0.15, length.out = 1000),
-                seq(-0.1, 0.05, length.out = 1000),
-                seq(-2, 2, length.out = 1000),
-                seq(-0.5, 2, length.out = 1000),
-                seq(-0.5, 2, length.out = 1000),
-                seq(-1, 0.5, length.out = 1000),
-                seq(-1, 0.5, length.out = 1000),
-                seq(-2, 2, length.out = 1000),
-                seq(-3, 3, length.out = 1000),
-                seq(0, 0.3, length.out = 1000),
-                seq(-0.15, 0.25, length.out = 1000),
-                seq(-0.1, 0.35, length.out = 1000),
-                seq(-0.2, 0.35, length.out = 1000),
-                seq(0, 0.35, length.out = 1000),
-                seq(0, 0.35, length.out = 1000),
-                seq(-0.05, 0.4, length.out = 1000))
-
 
 density <- data.frame()
 ncomp <- dim * (dim + 1)
@@ -454,8 +436,7 @@ for(m in 1:mix){
     dens <- vbDensity(fit = fitList,
                       transform = c('exp', rep('identity', dim - 1)),
                       names = c('sigma^{2}', 'intercept', 'temp', 'humidity', 'day1', 'day2', 'day3', 'day4', 'day5', 'day6', 'publicHol',
-                                'phi[1]', 'phi[2]', 'phi[3]', 'phi[48]', 'phi[96]', 'phi[144]', 'phi[336]'),
-                      support = support)
+                                paste0('phi[', order, ']'), paste0('gamma[', 1:ma, '],')))
  
     dens$w <- exp(fit$weights[m]) / sum(exp(fit$weights))
     dens$mix <- m
@@ -464,12 +445,36 @@ for(m in 1:mix){
   }
 }
 
-density %>%
-  add_column(i = rep(1:1000, dim * K * mix)) %>%
-  group_by(var, i, K) %>%
-  summarise(density = sum(density * w),
-            support = min(support)) %>%
-  ggplot() + geom_line(aes(support, density, colour = factor(K))) + facet_wrap(~var, scales = 'free')
+ggplot(density) + geom_line(aes(support, w * density, colour = paste(K, mix))) + facet_wrap(~var, scales = 'free')
+
+draws <- data.frame()
+w <- exp(fit$weights) / sum(exp(fit$weights))
+names <- c('sigma^{2}', 'intercept', 'temp', 'humidity', 'day1', 'day2', 'day3', 'day4', 'day5', 'day6', 'publicHol',
+          paste0('phi[', order, ']'), paste0('gamma[', 1:ma, '],'))
+for(i in 1:5000){
+  u <- runif(1)
+  m <- (u < w[1]) + 1
+  for(k in 1:K){
+    mean <- fit$lambda[(k-1) * ncomp + 1:dim, m]
+    L <- matrix(fit$lambda[(k-1) * ncomp + (dim+1):ncomp, m], dim, dim, byrow = TRUE)
+    sample <- mean + L %*% rnorm(dim)
+    sample[1] <- exp(sample[1])
+    draws <- rbind(draws,
+                   data.frame(draw = sample,
+                              var = names,
+                              k = k))
+  }
+  
+}
+
+draws %>%
+  mutate(var = factor(var, levels = names)) %>%
+  ggplot() + geom_density(aes(draw, colour = factor(k))) + facet_wrap(~var, scales = 'free')
+
+
+
+
+
 
 
 

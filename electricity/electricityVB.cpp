@@ -485,6 +485,7 @@ struct electricitySwitchingVAR {
 // order, a vector of the lags of the dynamic model
 // Tn: Size of current batch in terms of T (T is reserved in structures for stan::math::var)
 // priorWeights: priorWeights of prior distribution, prior columns / slices are added as needed. Eg, first K columns for first component, second K for second...
+// ma: number of ma lags
 struct electricityStandard{
   const mat y;
   const mat x;
@@ -495,15 +496,17 @@ struct electricityStandard{
   const vec order;
   const int Tn;
   const vec priorWeights;
-  electricityStandard(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn, const vec& priorWeightsIn) :
-    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), priorWeights(priorWeightsIn) {}
+  const int ma;
+  electricityStandard(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const cube& priorMeanIn, const cube& priorLinvIn, 
+                      const vec& orderIn, const int& TnIn, const vec& priorWeightsIn, const int& maIn) :
+    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), priorWeights(priorWeightsIn), ma(maIn) {}
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
     const{
     using std::log; using std::exp; using std::pow; using std::sqrt; using std::fabs; using std::max;
     int N = y.n_cols; // Number of units
     int K = probK.n_rows; // Number of dynamic models
-    int numPars = 1 + x.n_cols + order.n_elem; // Parameters = Logvar, mean, beta + order parameters
+    int numPars = 1 + x.n_cols + order.n_elem + ma; // Parameters = Logvar, mean, beta, ar, ma parameters
     int lambdaPerK = numPars * (numPars + 1); // Size of parameter vector for each dynamic model
     int mix = priorWeights.n_elem; // number of components of prior distribution
     
@@ -543,7 +546,7 @@ struct electricityStandard{
           priorComp(m) += - 0.5 * pow(kernelDyn(i, k), 2);
         }
       }
-      prior = prior + priorWeights(m) * dets(m) * exp(priorComp(m));
+      prior += priorWeights(m) * dets(m) * exp(priorComp(m));
     }
     prior = log(prior);
     
@@ -554,8 +557,12 @@ struct electricityStandard{
     int tau = y.n_rows - Tn;
     
     for(int i = 0; i < N; ++i){
-      for(int t = tau; t < y.n_rows; ++t){
+      Matrix<T, Dynamic, Dynamic> errors(max(ma, 1), K);
+      errors.fill(0);
+      for(int h = -ma; h < Tn; ++h){
         T likelihood = 0;
+        int t = h + tau;
+        
         for(int k = 0; k < K; ++ k){
           
           T mean = 0;
@@ -573,10 +580,27 @@ struct electricityStandard{
             mean += theta(1 + x.n_cols + l, k) * AR;
           }
           
-          // Calculate thel likelihood as the sum of each model likelihood * p(k_i = j)
-          likelihood += probK(k, i) / sqrt(2 * 3.14159 * exp(theta(0, k))) * exp(-pow(y(t, i) - mean, 2) / (2 * exp(theta(0, k))));
+          // Now add ma terms
+          for(int m = 0; m < ma; ++m){
+            mean += theta(1 + x.n_cols + order.n_elem + m, k) * errors(m, k);
+          }
+          // Then lag the recent errors
+          for(int m = ma - 1; m > 0; --m){
+            errors(m, k) = errors(m-1, k);
+          }
+          // And save the current error
+          errors(0, k) = y(t, i) - mean;
+          
+          // After the initial period start calculating the likelihood
+          if(h >= 0){
+            // Calculate thel likelihood as the sum of each model likelihood * p(k_i = j)
+            likelihood += probK(k, i) / sqrt(2 * 3.14159 * exp(theta(0, k))) * exp(-pow(y(t, i) - mean, 2) / (2 * exp(theta(0, k))));
+          }
         }
-        logLik += log(likelihood);
+        // add the log of the sum of the components
+        if(h >= 0){
+          logLik += log(likelihood);  
+        }
       }
     }
     return prior + logLik + logdetJ;
@@ -603,15 +627,17 @@ struct electricityStandardVAR{
   const vec order;
   const int Tn;
   const vec priorWeights;
-  electricityStandardVAR(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn, const int& TnIn, const vec& priorWeightsIn) :
-    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), priorWeights(priorWeightsIn)  {}
+  const int ma;
+  electricityStandardVAR(const mat& yIn, const mat& xIn, const vec& epsIn, const mat& probKIn, const cube& priorMeanIn, const cube& priorLinvIn, const vec& orderIn,
+                         const int& TnIn, const vec& priorWeightsIn, const int& maIn) :
+    y(yIn), x(xIn), epsilon(epsIn), probK(probKIn), priorMean(priorMeanIn), priorLinv(priorLinvIn), order(orderIn), Tn(TnIn), priorWeights(priorWeightsIn), ma(maIn) {}
   template <typename T> //
   T operator ()(const Matrix<T, Dynamic, 1>& lambda)
     const{
     using std::log; using std::exp; using std::pow; using std::sqrt; using std::fabs; using std::max;
     int N = y.n_cols; // Number of units
     int K = probK.n_rows; // Number of dynamic models
-    int dim = 1 + x.n_cols + order.n_elem;
+    int dim = 1 + x.n_cols + order.n_elem + ma;
     int numPars = 48 * dim; // Parameters = Logvar, mean, beta + order parameters
     int mix = priorWeights.n_elem; // number of components of prior distribution
     
@@ -661,7 +687,10 @@ struct electricityStandardVAR{
     // Starting point is tau, will be part way through the data as the first data points are lags.
     int tau = y.n_rows - Tn;
     for(int i = 0; i < N; ++i){
-      for(int t = tau; t < y.n_rows; ++t){
+      Matrix<T, Dynamic, Dynamic> errors(max(1, ma), K);
+      errors.fill(0);
+      for(int h = -ma; h < Tn; ++h){
+        int t = h + tau;
         int halfhour = t % 48;
         T likelihood = 0;
         for(int k = 0; k < K; ++ k){
@@ -680,9 +709,23 @@ struct electricityStandardVAR{
             mean +=  theta(48 * (1 + x.n_cols + l) + halfhour, k) * AR;
           }
           
-          likelihood += probK(k, i) / sqrt(2 * 3.14159 * exp(theta(halfhour, k))) * exp(-pow(y(t, i) - mean, 2) / (2 * exp(theta(halfhour, k))));
+          // Now add ma terms
+          for(int m = 0; m < ma; ++m){
+            mean += theta(48 * (1 + x.n_cols + order.n_elem + m) + halfhour, k) * errors(m, k);
+          }
+          // Then lag the recent errors
+          for(int m = ma - 1; m > 0; --m){
+            errors(m, k) = errors(m-1, k);
+          }
+          // And save the current error
+          errors(0, k) = y(t, i) - mean;
+          if(h >= 0){
+            likelihood += probK(k, i) / sqrt(2 * 3.14159 * exp(theta(halfhour, k))) * exp(-pow(y(t, i) - mean, 2) / (2 * exp(theta(halfhour, k))));
+          }
         }
-        logLik += log(likelihood);
+        if(h >= 0){
+          logLik += log(likelihood);
+        }
       }
     }
     return prior + logLik + logdetJ;
@@ -691,7 +734,7 @@ struct electricityStandardVAR{
 
 // [[Rcpp::export]]
 Rcpp::List elecModel(mat y, Rcpp::NumericMatrix lambdaIn, vec epsilon, mat x, mat probK, cube priorMean, cube priorLinv, vec order, vec priorWeights,
-                     int Tn, mat ps1, bool uniformRho = true, bool switching = false, bool var = false) {
+                     int Tn, mat ps1, bool uniformRho = true, bool switching = false, bool var = false, int ma = 0) {
   Map<MatrixXd> lambda(Rcpp::as<Map<MatrixXd> >(lambdaIn));
   double eval;
   int dim = lambda.rows();
@@ -709,11 +752,11 @@ Rcpp::List elecModel(mat y, Rcpp::NumericMatrix lambdaIn, vec epsilon, mat x, ma
     }
   } else {
     if(var){
-      electricityStandardVAR p(y, x, epsilon, probK, priorMean, priorLinv, order, Tn, priorWeights);
+      electricityStandardVAR p(y, x, epsilon, probK, priorMean, priorLinv, order, Tn, priorWeights, ma);
       stan::math::set_zero_all_adjoints();
       stan::math::gradient(p, lambda, eval, gradP);
     } else {
-      electricityStandard p(y, x, epsilon, probK, priorMean, priorLinv, order, Tn, priorWeights);
+      electricityStandard p(y, x, epsilon, probK, priorMean, priorLinv, order, Tn, priorWeights, ma);
       stan::math::set_zero_all_adjoints();
       stan::math::gradient(p, lambda, eval, gradP);
     }
@@ -732,20 +775,29 @@ Rcpp::List elecModel(mat y, Rcpp::NumericMatrix lambdaIn, vec epsilon, mat x, ma
 // log: boolean, return log likelihood if true
 // var: boolean, return the var model with halfhours corresponding to columns of theta
 // [[Rcpp::export]]
-vec arLikelihood(vec y, mat x, mat theta, vec order, int T, bool log, bool var){
+vec arLikelihood(vec y, mat x, mat theta, vec order, int T, bool log, bool var, int ma = 0){
   int hh = 0, tau = y.n_elem - T;
-  vec beta, phi, likelihood(T);
+  vec beta, phi, gamma, likelihood(T);
   
   if(!var){
     beta = theta(span(1, x.n_cols), 0);
     phi = theta(span(x.n_cols + 1, x.n_cols + order.n_elem), 0);
+    if(ma > 0){
+      gamma = theta(span(x.n_cols + order.n_elem + 1, x.n_cols + order.n_elem + ma), 0);
+    }
   }
   
-  for(int t = tau; t < y.n_elem; ++t){
+  vec errors(max(1, ma), fill::zeros);
+  
+  for(int h = -ma; h < T; ++h){
+    int t = h + tau;
     if(var){
       int hh = t % 48;
       beta = theta(span(1, x.n_cols), hh);
       phi = theta(span(x.n_cols + 1, x.n_cols + order.n_elem), hh);
+      if(ma > 0){
+        gamma = theta(span(x.n_cols + order.n_elem + 1, x.n_cols + order.n_elem + ma), hh);
+      }
     }
     
     double mean = as_scalar(x.row(t) * beta);
@@ -753,11 +805,25 @@ vec arLikelihood(vec y, mat x, mat theta, vec order, int T, bool log, bool var){
     for(int l = 0; l < order.n_elem; ++l){
       mean += phi(l) * (y(t - order(l)) - as_scalar(x.row(t - order(l)) * beta));
     }
+
+    // Now add ma terms
+    for(int m = 0; m < ma; ++m){
+      mean += gamma(m) * errors(m);
+    }
+    // Then lag the recent errors
+    for(int m = ma - 1; m > 0; --m){
+      errors(m) = errors(m-1);
+    }
+    // And save the current error
+    errors(0) = y(t) - mean;
     // Finally calculate the likelihood
-    if(log){
-      likelihood(t - tau) =  - 0.5 * std::log(2 * 3.14159) - 0.5 * theta(0, hh) - pow(y(t) - mean, 2) / (2 * exp(theta(0, hh)));
-    } else {
-      likelihood(t - tau) = 1.0 / sqrt(2 * 3.14159 * exp(theta(0, hh))) * exp(-pow(y(t) - mean, 2) / (2 * exp(theta(0, hh))));
+    
+    if(h >= 0){
+      if(log){
+        likelihood(t - tau) =  - 0.5 * std::log(2 * 3.14159) - 0.5 * theta(0, hh) - pow(y(t) - mean, 2) / (2 * exp(theta(0, hh)));
+      } else {
+        likelihood(t - tau) = 1.0 / sqrt(2 * 3.14159 * exp(theta(0, hh))) * exp(-pow(y(t) - mean, 2) / (2 * exp(theta(0, hh))));
+      }
     }
   }
   return likelihood;
@@ -772,9 +838,9 @@ vec arLikelihood(vec y, mat x, mat theta, vec order, int T, bool log, bool var){
 // prior p(k = j) 
 // T: amount of data to be evaluated
 // [[Rcpp::export]]
-double probK (vec y, mat x, mat theta, vec order, double prior, int T, bool var){
+double probK (vec y, mat x, mat theta, vec order, double prior, int T, bool var, int ma = 0){
   double logdens = log(prior);
-  vec loglik = arLikelihood(y, x, theta, order, T, true, var);
+  vec loglik = arLikelihood(y, x, theta, order, T, true, var, ma);
   logdens += sum(loglik);
   return logdens;
 }
@@ -814,7 +880,7 @@ vec probSKHF (vec y, mat x, mat thetaD, vec thetaC, vec order, double pS1, doubl
 // fcVAR should work the same way, 48 periods ahead in rows, 1 or 48 per halfhour sets in columns, and groups in slices
 // will forecast the number of rows in fcVar ahead
 // [[Rcpp::export]]
-mat forecastStandard (vec y, mat x, cube theta, vec order, vec pkNorm, cube fcVar, vec support, bool var){
+mat forecastStandard (vec y, mat x, cube theta, vec order, vec pkNorm, cube fcVar, vec support, bool var, int ma = 0){
   int M = support.n_elem;
   int H = fcVar.n_rows;
   int K = pkNorm.n_elem;
@@ -823,15 +889,19 @@ mat forecastStandard (vec y, mat x, cube theta, vec order, vec pkNorm, cube fcVa
   
   // Forecast each model, skip components with zero probability
   for(int ki = 0; ki < K; ++ki){
-    vec beta, phi, ylag = {y(T), y(T-1), y(T-2)};
+    vec beta, phi, gamma, ylag = {y(T - ma), y(T-1 - ma), y(T-2 - ma)};
     int hh = 0;
-      
-    for(int h = 1; h <= H; ++h){
+    vec errors(max(1, ma), fill::zeros);
+    
+    for(int h = 1 - ma; h <= H; ++h){
       if(var){
         hh = (T + h) % 48;
       }
-      vec beta = theta.slice(ki)(span(1, x.n_cols), hh);
-      vec phi = theta.slice(ki)(span(x.n_cols+1, x.n_cols + order.n_elem), hh);
+      beta = theta.slice(ki)(span(1, x.n_cols), hh);
+      phi = theta.slice(ki)(span(x.n_cols+1, x.n_cols + order.n_elem), hh);
+      if(ma > 0){
+        gamma = theta.slice(ki)(span(x.n_cols + order.n_elem + 1, x.n_cols + order.n_elem + ma), hh);  
+      }
         
       double mean = as_scalar(x.row(T + h) * beta);
         
@@ -843,13 +913,27 @@ mat forecastStandard (vec y, mat x, cube theta, vec order, vec pkNorm, cube fcVa
         mean += phi(l) * (y(T + h - order(l)) - as_scalar(x.row(T + h - order(l)) * beta));
       }
       
+      // Now add ma terms
+      for(int m = 0; m < ma; ++m){
+        mean += gamma(m) * errors(m);
+      }
+      // Then lag the recent errors
+      for(int m = ma - 1; m > 0; --m){
+        errors(m) = errors(m-1);
+      }
+      // And save the current error
+      errors(0) = y(T + h) - mean;
       for(int l = 2; l > 0; --l){
         ylag(l) = ylag(l - 1);
       }
       ylag(0) = mean;
-      for(int m = 0; m < M; ++m){
-        density(m, h-1) += pkNorm(ki) / sqrt(2 * 3.14159 * fcVar(h - 1, hh, ki)) * exp(-pow(support(m) - mean, 2) / (2 * fcVar(h-1, hh, ki)));
+      // Finally calculate the likelihood
+      if(h >= 1){
+        for(int m = 0; m < M; ++m){
+          density(m, h-1) += pkNorm(ki) / sqrt(2 * 3.14159 * fcVar(h - 1, hh, ki)) * exp(-pow(support(m) - mean, 2) / (2 * fcVar(h-1, hh, ki)));
+        }
       }
+    
     }
   }
   
