@@ -1,5 +1,8 @@
   \documentclass[12pt,a4paper]{article}\usepackage[]{graphicx}\usepackage[]{color}
+\usepackage{bm}
+\usepackage{verbatim}
 %% maxwidth is the original width if it is less than linewidth
+
 %% otherwise use linewidth (to make sure the graphics do not exceed the margin)
 \makeatletter
 \def\maxwidth{ %
@@ -142,11 +145,51 @@ The paper is arranged as follows
 \item Section 7: Discussion
 \end{itemize}
 
+\section{Background to Variational Bayes}
+\label{sec:background}
+{\color{blue} Before introducing our novel algorithms for updating Variational Bayes (VB) estimates in an online setting, we briefly cover some elementary concepts in the Variational Bayes literature.  A more thorough review of Variational Bayes can be found in \cite{Blei2017} and references therein.  
+\\
 
+The usual target of Bayesian inference is the posterior
+\begin{equation}
+\label{posterior}
+p({\bm\theta} | {\bm y}_{1:T}) = \frac{p({\bm y}_{1:T} | {\bm\theta})p({\bm\theta})}{\int_{\bm \theta}p({\bm y}_{1:T} | {\bm\theta})p({\bm\theta})d{\bm\theta}}\,,
+\end{equation}
+where ${\bm\theta}$ is a vector of parameters and ${\bm y}_{1:T}$ denote data observed from time $1$ to $T$.  Although algorithms exist to produce a sample from this posterior on which Monte Carlo inference can be carried out, these can be computationally intensive.  As an alternative, variational Bayes' aims to approximate this posterior distribution with a parametric density $q_{\bm \lambda}({\bm\theta} |{\bm y}_{1:T})$.  Here ${\bm \lambda}$ is a vector of auxiliary parameters associated with the approximation. The presence of ${\bm y}_{1:T}$ in the notation is used to make it clear that $q$ approximates the posterior and in some instances ${\bm\lambda}$ can even depend on ${\bm y}_{1:T}$. 
+\\
 
+In VB, ${\bm \lambda}$ is chosen to minimise some error function, typically the Kullback-Leibler (KL) divergence  \citep{Kullback1951} from $q_{\bm \lambda}({\bm \theta} |{\bm y}_{1:T})$ to $p({\bm\theta} |{\bm y}_{1:T})$.  The KL divergence denoted $KL[q_{\bm \lambda}({\bm\theta} |{\bm y}_{1:T})\hspace{.1cm}||\hspace{.1cm}p({\bm\theta} |{\bm y}_{1:T})]$ is given by
+\begin{equation}
+\label{KL-def}
+KL[q_{\bm\lambda}({\bm\theta} |{\bm y}_{1:T})\hspace{.1cm}||\hspace{.1cm}p({\bm\theta} |{\bm y}_{1:T})] = E_q \left[ \log(q_{\bm \lambda}({\bm \theta} |{\bm y}_{1:T})) - \log(p({\bm \theta} |{\bm y}_{1:T})) \right]\,.
+\end{equation}
 
+In practice, minimising the KL divergence is complicated for a number of reasons.  First, $p({\bm\theta} | {\bm y}_{1:T})$ is often only known up to proportionality due to the difficulty of evaluating the integral of the denominator in (\ref{posterior}).  This can be circumvented by solving a problem that is equivalent to minimising the KL divergence, namely maximising the evidence lower bound (ELBO).  The ELBO is given by
+\begin{equation}
+\label{ELBO}
+\mathcal{L}(q, {\bm\lambda}) = E_q \left[\log(p({\bm \theta}, {\bm y}_{1:T})) - \log(q_{\bm\lambda}({\bm\theta} | {\bm y}_{1:T}))\right],
+\end{equation} 
+A second difficulty that arises in VB is that the expectation in (\ref{ELBO}) cannot be evaluated analytically.  For this reason, maximisation of the ELBO is achieved via stochastic gradient ascent (SGA).  After initalising ${\bm \lambda}$ at an appropriate value, SGA applies updates of the form
+\begin{equation}
+\label{gradientAscent}
+{\bm\lambda}^{(m+1)} = {\bm\lambda}^{(m)} + \rho^{(m)} \widehat{\frac{\partial\mathcal{L}(q, {\bm\lambda})}{\partial {\bm\lambda}}} \bigg\rvert_{{\bm\lambda} = {\bm\lambda}^{(m)}}\,
+\end{equation}
+until the change from $\mathcal{L}(q, {\bm\lambda}^{(m)})$ to $\mathcal{L}(q, {\bm \lambda}^{(m+1)})$ falls below some pre-specified threshold \citep{Hoffman2013}.  The expectation in the gradient term in Equation~\ref{gradientAscent} is estimated by Monte Carlo. A popular choice is the score gradient estimator of \citet{Ranganath2014} given by
+\begin{equation}
+\label{scoreDeriv}
+\widehat{\frac{\partial\mathcal{L}(q, {\bm\lambda})}{\partial {\bm\lambda}}}_{SC} = \sum_{j = 1}^J \frac{\partial \log(q_{\bm \lambda}({\bm\theta}^{(j)} | {\bm y}_{1:T}))}{\partial {\bm\lambda}} \left(\log(p({\bm\theta}^{(j)}, {\bm y}_{1:T})) - \log(q_{\bm\lambda}({\bm\theta}^{(j)} | {\bm y}_{1:T})) \right),
+\end{equation}
+and where ${\bm\theta}^{(j)}$ are drawn from the approximating density $q_{\bm\lambda}({\bm\theta} | {\bm y}_{1:T})$.  This procedure is guaranteed to converge to a local maximum \citep{Robbins1951} if the sequence $\rho^{(m)}, m = 1, \dots, \infty$, satisfies
+\begin{align}
+&\sum_{m=1}^{\infty} \rho^{(m)} =  \infty \\
+&\sum_{m=1}^{\infty} (\rho^{(m)})^2 <  \infty.
+\end{align}
+\\
+}
+\begin{comment}
 \section{Bayesian Inference}
 \label{sec:Inference}
+
 
 Let $y_{1:T}$ be a sequence of observed data up to some time $T$, associated with a model conditioned on some unknown parameter vector $\theta$ given by
 \begin{equation}
@@ -259,9 +302,64 @@ where the sum in (\ref{OnlineSVB:likelihoodEstim}) is only over components of $y
 
 Each iteration of the gradient ascent algorithm should use a different subset of the data, so that sequential iterations cycle through the entire dataset. 
 \\
-
+\end{comment}
 \section{Updating Variational Bayes}
 \label{sec:UVB}
+
+{\color{blue} We now introduce a novel algorithm for updating Variational Bayes' to settings where data is regularly being observed in an online setting.  Let $T_1, T_2, \ldots$ be a sequence of time points, from which a sequence of posterior distributions $p({\bm\theta} | {\bm y}_{1:T_1}), p({\bm\theta} | {\bm y}_{1:T_2}), \ldots$, may be desired.
+\\
+
+This is illustrated in Figure \ref{fig:updatetimeUpdate} for data taken from a vehicle in the Next Generation Simulation (NGSIM) dataset provided by the US Federal Highway Administration (FHWA), travelling towards the right. In the left panel, the vehicle has been observed up until time period $T_{n}$ resulting in data $y_{1:T_{n}}$ which can be incorporated into the posterior distribution $p(\theta | y_{1:T_{n}})$. In the right panel, after observation up until time $T_{n+1}$, an additional $T_{n+1} - T_{n}$ data points are available, and posterior inference should be updated and based on $p({\bm\theta} | {\bm y}_{1:T_{n+1}})$.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width = 0.95\textwidth, height = 0.15\textheight]{figures/carUpdate}
+\caption{Left: The path of a vehicle in the NGSIM dataset that has been observed for a time period equal to $T_{n}$, where the direction of travel is from the left to the right. Right: The same vehicle at a later time $T_{n+1}$, with the extra $T_{n+1} - T_{n}$ observations denoted by the dashed line. Posterior inference about this vehicle could be updated from time $T_{1}$ to time $T_{2}$ by the inclusion of this additional information.}
+\label{fig:updatetimeUpdate}
+\end{figure}
+The usual application of Bayes' rule at time $T_2$ involves a likelihood made up of $T_2$ terms.  However if $p({\bm\theta} | {\bm y}_{1:T_{n}})$ is available the posterior can be updated by 
+\begin{equation}
+\label{update:updatePost}
+p({\bm\theta} | {\bm y}_{1:T_{n+1}}) \propto p({\bm y}_{T_{n}+1:T_{n+1}} | {\bm\theta}, {\bm y}_{1:T_{n}})p({\bm\theta} | {\bm y}_{1:T_{n}}),
+\end{equation}
+where the first term on the right hand side of (\ref{update:updatePost}) only involves $T_2-T_1$ rather than $T_2$ terms.
+
+In cases where evaluation of the posterior is computationally demanding we propose an Updating Variational Bayes (UVB) algorithm summarised as Algorithm \ref{alg:UVB}.  The algorithm is initialised by forming the following variational approximation at time $T_1$.
+\begin{equation}
+\label{UVB:Time1}
+q_{\lambda_1}(\theta | y_{1:T_1}) = \arg \underset{q}{\min} \hspace{1mm} KL[q_{\lambda_1} (\theta | y_{1:T_1}) \hspace{.1cm}||\hspace{.1cm}p(\theta | y_{1:T_1})].
+\end{equation}
+Variational approximations at subsequent intervals are formed as
+\begin{equation}
+\label{UVB:TimeNp1}
+q_{\lambda_{n+1}}(\theta | y_{1:T_{n+1}}) = \arg \underset{q}{\min} \hspace{1mm} KL[q_{\lambda_{n+1}} (\theta | y_{1:T_{n+1}}) \hspace{.1cm}||\hspace{.1cm}\hat{p}(\theta | y_{1:T_{n+1}})],
+\end{equation}
+where the objective is to minimise KL divergence from a pseudo-posterior given by
+\begin{equation}
+\label{UVB:pHatPosterior}
+\hat{p}(\theta |  y_{1:T_{n+1}}) \propto p(y_{T_{n}+1:T_{n+1}} | \theta)q_{\lambda_{n}}(\theta | y_{1:T_{n}}).
+\end{equation}
+
+\begin{algorithm}[H]
+ \SetKwInOut{Input}{Input}
+ \Input{Prior, Likelihood.}
+ \KwResult{Approximating distribution at $T_N$.}
+ Observe $y_{1:T_1}$\;
+ Use (\ref{scoreDeriv}) to choose the $\lambda_1$ that minimises $KL[q_{\lambda_1}(\theta |y_{1:T_1})\hspace{.1cm}||\hspace{.1cm}p(\theta |y_{1:T_1})]$\;
+ \For{$n \mbox{ in } 2, \ldots, N-1$}{
+   Observe next data $y_{T_{n}+1:T_{n+1}}$\;
+   Use $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$ and (\ref{scoreDeriv}) to choose the $\lambda_{n+1}$ that minimises $KL[q_{\lambda_{n+1}}(\theta |y_{1:T_{n+1}})\hspace{.1cm}||\hspace{.1cm}\hat{p}(\theta |y_{1:T_{n+1}})]$
+  }
+ \caption{Updating Variational Bayes}
+  \label{alg:UVB}
+\end{algorithm}
+
+We note some differences between the proposed UVB algorithm and a standard Variational Bayes (hereafter SVB) implementation.  First, for equally spaced intervals $H=T_{n+1}-T_{n}$ for all $n$, the likelihood component of UVB has a computational complexity of $O(H)$ compared to $O(T_{n+1})$ for SVB.  Second, for UVB $\lambda_n$ can be used as starting values in the optimisation at step $n+1$ as long as the class of approximating distributions $q$ is the same for each update.  This ensure faster convergence of variational Bayes'.  Third, an SVB algorithm at step $T_{n+1}$ can only begin at time $T_{n+1}$ once all data has been observed.  In contrast the UVB algorithm can begin when only part of the data has been observed making it well suited to online applications.  Finally, since UVB targets the pseudo-posterior rather than the true posterior we expect SVB to be more accurate.
+\\
+
+Clearly the above discussion highlights a trade-off between computational speed and accuracy for UVB and SVB.  The nature of this trade-off will be context specific depending on the model, the frequency with which data is collected in real time and the methods used for variational approximation.  These issues are investigated in a simulated setting in Section~\ref{sec:UVBSim}.}
+
+\begin{comment}
 
 The discussion is extended to settings where data is regularly being observed in an online setting, resulting in a sequence of time points $T_1, T_2, \ldots$, from which a sequence of posterior distributions $p(\theta | y_{1:T_1}), p(\theta | y_{1:T_2}), \ldots$, may be desired.
 \\
@@ -317,21 +415,84 @@ If the updates are equally spaced such that $T_{n+1} - T_{n} = H$ for all $n$, t
 A summary of the UVB algorithm is given by Algorithm \ref{alg:UVB}.
 
 \begin{algorithm}[H]
- \SetKwInOut{Input}{Input}
- \Input{Prior, Likelihood.}
- \KwResult{Approximating distribution at $T_N$.}
- Observe $y_{1:T_1}$\;
- Use (\ref{scoreDeriv}) to choose the $\lambda_1$ that minimises $KL[q_{\lambda_1}(\theta |y_{1:T_1})\hspace{.1cm}||\hspace{.1cm}p(\theta |y_{1:T_1})]$\;
- \For{$n \mbox{ in } 2, \ldots, N-1$}{
-   Observe next data $y_{T_{n}+1:T_{n+1}}$\;
-   Use $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$ and (\ref{scoreDeriv}) to choose the $\lambda_{n+1}$ that minimises $KL[q_{\lambda_{n+1}}(\theta |y_{1:T_{n+1}})\hspace{.1cm}||\hspace{.1cm}\hat{p}(\theta |y_{1:T_{n+1}})]$
-  }
- \caption{Updating Variational Bayes}
-  \label{alg:UVB}
+\SetKwInOut{Input}{Input}
+\Input{Prior, Likelihood.}
+\KwResult{Approximating distribution at $T_N$.}
+Observe $y_{1:T_1}$\;
+Use (\ref{scoreDeriv}) to choose the $\lambda_1$ that minimises $KL[q_{\lambda_1}(\theta |y_{1:T_1})\hspace{.1cm}||\hspace{.1cm}p(\theta |y_{1:T_1})]$\;
+\For{$n \mbox{ in } 2, \ldots, N-1$}{
+Observe next data $y_{T_{n}+1:T_{n+1}}$\;
+Use $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$ and (\ref{scoreDeriv}) to choose the $\lambda_{n+1}$ that minimises $KL[q_{\lambda_{n+1}}(\theta |y_{1:T_{n+1}})\hspace{.1cm}||\hspace{.1cm}\hat{p}(\theta |y_{1:T_{n+1}})]$
+}
+\caption{Updating Variational Bayes}
+\label{alg:UVB}
 \end{algorithm}
+
+\end{comment}
 
 \section{Importance Sampled UVB} 
 \label{sec:UVBIS}
+{\color{blue}
+{\em Possibly merge with previous section.  In the whole section it is a little blurred whether we use $q_{\lambda_{n}}$ and an importance density for $q_{\lambda_{n}}$ or $q_{\lambda^m}$ as an importance density for $q^{\lambda_{n}}$ or both.  The computational advantages of these I think are different, I think the former still required some likelihood calculation.  Finally I read Sakaya and Klami, they seem to make a big deal of using the reparameterisation trick in that context.  I'm not sure if we have done that here.}
+
+
+Potential computational gains can be achieved in UVB by incorporating ideas from importance sampling.  To illustrate we first consider importance sampling in a standard VB implementation as introduced y \cite{Sakaya2017}. Subscripts are dropped on $\bm{y}$ for ease of exposition.  To update from step $m$ to step $m+1$ of the gradient ascent algorithm the gradient in Equation\ref{gradientAscent} is approximated by Monte Carlo as shown in Equation \ref{scoreDeriv}.  This involves simulating ${\bm \theta}^{(1)},\ldots{\bm{\theta}}^{(J)}\sim q_{\lambda^{(m)}}$ and evaluating $p({\bm y}, {\bm \theta^{(j)}})$ for all $j$.  At step $m+1$ a na\"ive approach would be to simulate a new sample from  $q_{\lambda^{(m+1)}}$.  However since $q_{\lambda^{(m)}}$ is likely to be close to $q_{\lambda^{(m+1)}}$ the former can be used as an importance density for the latter.  This ease the computational burden since the approximation using importance sampling only requires $p({\bm y}, {\bm \theta^{(j)}})$ which are already available from the previous step.
+
+We propose extending this idea to UVB in an algorithm we call Importance Sampling Updated Variation Bayes (IS-UVB).  In this algorithm, the approximation to the pseudo-posterior $q_{{\bm\lambda}_n}$ is used as an importance density for approximating gradients in solving for $q_{\bm\lambda_{n+1}}$.
+
+Recall the gradient of the ELBO in UVB is,
+\begin{equation}
+\label{UVBIS:scoreGrad}
+\frac{\partial\mathcal{L}(q, {\bm\lambda}_{n+1})}{\partial {\bm \lambda}_{n+1}} =
+ \int_{\bm\theta} q_{{\bm\lambda}_{n+1}}({\bm\theta} | {\bm y}_{1:T_{n+1}}) \frac{\partial \log(q_{{\bm\lambda}_{n+1}} | {\bm y}_{1:T_{n+1}})}{\partial {\bm\lambda}_{n+1}} \log \left(\frac{\hat{p}({\bm y}_{1:T_{n+1}}, {\bm\theta})}{q_{{\bm\lambda}_{n+1}}({ | {\bm y}_{1:T_{n+1}})}} \right) d{\bm\theta}.
+\end{equation}
+By multiplying and dividing by $q_{{\bm\lambda}_n}({\bm\theta} | {\bm y}_{1:T_n})$ this can be written as an expectation with respect to $q_{{\bm\lambda}_n}$ which is the UVB approximation to the pseudo posterior based on data up until time $T_n$:
+\begin{equation}
+\label{UVBIS:scoreGradIS}
+\frac{\partial\mathcal{L}(q, {\bm \lambda}_{n+1})}{\partial {\bm \lambda}_{n+1}} = \int_{\theta} q_{{\bm \lambda}_{n}}({\bm \theta} | {\bm y}_{1:T_{n}})\frac{q_{{\bm\lambda}_{n+1}}({\bm\theta} | {\bm y}_{1:T_{n+1}})}{q_{{\bm\lambda}_{n}}(\bm{\theta} | {\bm y}_{1:T_{n}})} \frac{\partial \log(q_{{\bm \lambda}_{n+1}}({\bm\theta} | {\bm y}_{1:T_{n+1}}))}{\partial {\bm \lambda}_{n+1}} \log \left(\frac{\hat{p}({\bm y}_{1:T_{n+1}}, {\bm\theta})}{q_{{\bm\lambda}_{n+1}}({\bm\theta} | {\bm y}_{1:T_{n+1}})} \right) d{\bm \theta}.
+\end{equation}
+This can be estimated via Monte Carlo,
+\begin{equation}
+\label{UVBIS:scoreEstIS}
+\widehat{\frac{\partial\mathcal{L}(q, {\bm \lambda}_{n+1})}{\partial {\bm\lambda}_{n+1}}}_{IS} = \frac{1}{J} \sum_{j=1}^J w({\bm\theta}^{(j)})\frac{\partial \log(q_{{\bm\lambda}_{n+1}}({\bm\theta}^{(j)} | {\bm y}_{1:T_{n+1}}))}{\partial {\bm\lambda}_{n+1}} \log \left(\frac{\hat{p}({\bm y}_{1:T_{n+1}}, {\bm \theta}^{(j)})}{q_{{\bm\lambda}_{n+1}}({\bm\theta}^{(j)} | {\bm y}_{1:T_{n+1}})} \right),
+\end{equation}
+where ${\bm\theta} \sim q_{{\bm\lambda}_{n}}({\bm\theta} | {\bm y}_{1:{T_n}})$ and 
+\begin{equation}
+w({\bm\theta}^{(i)}) = \frac{q_{{\bm\lambda}_{n+1}}({\bm\theta}^{(i)} | {\bm y}_{1:T_{n+1}})}{q_{{\bm\lambda}_{n}}({\bm\theta}^{(i)} | {\bm y}_{1:T_{n}})}.
+\end{equation}
+
+Since only ${\bm \lambda}_{n+1}$ and not the parameter draws change for each step of gradient ascent, only $\frac{\partial}{\partial {\bm\lambda}_{n+1}} \log(q_{{\bm\lambda}_{n+1}}({\bm\theta} | {\bm y}_{1:T_{n+1}}))$ and $q_{{\bm\lambda}_{n+1}}({\bm\theta}^{(i)} | {\bm y}_{1:T_{n+1}})$ need to be recalculated.
+\\
+
+In the UVB case, if the marginal information about ${\bm\theta}$ contained in data observed in the interval between $T_n$ to $T_{n+1}$ is relatively small, then the KL divergence minimising value of $\lambda_{n+1}$ will not be significantly different from $\lambda_n$ and importance sampler weight decay is avoided.
+\\
+
+The variance of this estimator is increased relative to the score gradient estimator in (\ref{scoreDeriv}) due to the presence of the importance sampling weights. This increased variance can resulting in less accurate approximations, as the algorithm stopping criteria, a sufficiently small value of $|\mathcal{L}(q, \lambda^{(m+1)}) - \mathcal{L}(q, \lambda^{(m)})|$ after iteration $m+1$ is only evaluated as a noisy estimate also using the importance sampler. As the computation per iteration is extremely small we can set $N$ to be very large to compensate, allowing the user to set the trade-off between computation time approximation accuracy to suit their requirements.
+\\
+{\em Not sure what $N$ is here.  My hunch is that we allow the SGA to go for more steps.}
+
+IS-UVB is summarised in Algorithm \ref{alg:UVBIS}.
+\\
+
+\vspace{2mm}
+\begin{algorithm}[H]
+	\SetKwInOut{Input}{Input}
+	\Input{Prior, Likelihood.}
+	\KwResult{Approximating distribution at $T_N$.}
+	Observe $y_{1:T_1}$\;
+	Use (\ref{scoreDeriv}) to choose the $\lambda_1$ that minimises $KL[q_{\lambda_1}(\theta |y_{1:T_1})\hspace{.1cm}||\hspace{.1cm}p(\theta |y_{1:T_1})]$\;
+	\For{$n \mbox{ in } 1, \ldots, N-1$}{
+		Observe $y_{T_{n}+1:T_{n+1}}$\;
+		Sample $\theta \sim q_{\lambda_{n}}(\theta | y_{1:T_{n}})$\; 
+		Calculate $p(y_{T_{n}+1:T_{n+1}} | \theta)$ and $q_{\lambda_{n}}(\theta | y_{1:T_{n}})$ for these samples\;
+		Use (\ref{UVBIS:scoreEstIS}) to choose the $\lambda_{n+1}$ that minimises $KL[q_{\lambda_{n+1}}(\theta |y_{1:T_{n+1}})\hspace{.1cm}||\hspace{.1cm}\hat{p}(\theta |y_{1:T_{n+1}})]$
+	}
+	\caption{Importance Sampled UVB}
+	\label{alg:UVBIS}
+\end{algorithm}
+}
+
+\begin{comment}
 
 UVB has significant computational cost savings as it reduces the likelihood from a product of $T_{n+1}$ terms to a product of only $T_{n+1} - T_n$ terms. \\
 
@@ -404,6 +565,8 @@ IS-UVB is outlined in Algorithm \ref{alg:UVBIS}.
   \label{alg:UVBIS}
 \end{algorithm}
 
+
+\end{comment}
 \iffalse
 \section{Approximation Error}
 
