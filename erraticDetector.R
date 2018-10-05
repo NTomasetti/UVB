@@ -4,40 +4,41 @@ Rcpp::sourceCpp('erraticDetector.cpp')
 
 carsAug <- readRDS('../Cars/OHF/carsAug.RDS')
 
-N <- 500
+N <- 200
+maxT <- 600
 
-set.seed(1)
+#' Find cars that have:
+#' A) Been in the sample for at least T observations
+#' B) Not stopped inside the first T observations
+#' C) Did not take any huge turns associated with bad measurements at low velocity
+#' 2154 Vehicles remain
 
 carsAug %>%
-  group_by(ID) %>%
-  filter(y > 190) %>%
-  summarise(n = n()) %>% 
-  filter(n > 602) %>%
-  left_join(carsAug) %>%
-  filter(y > 190) %>%
-  group_by(ID) %>%
-  mutate(n = seq_along(time),
-         o = relD - lag(relD)) %>%
-  filter(min(relV) > 0) -> carsNoStop
+  group_by(ID) %>% 
+  mutate(n = seq_along(time)) %>%
+  filter(max(n) >= maxT & n <= maxT) %>%
+  filter(min(relV) > 0 & max(abs(relD - pi/2)) < 1) -> carsNoStop
 
+
+set.seed(1)
 subID <- sample(unique(carsNoStop$ID), N) 
 
 carsNoStop %>%
-  filter(ID %in% subID & n > 2 & n <= 602) %>%
+  filter(ID %in% subID) %>%
   select(-x, -y) %>%
-  rename(v = relV, a = relA, x = relX, y = relY, d = relD) %>%
+  rename(v = relV, a = relA, x = relX, y = relY, d = relD, o = relO) %>%
   select(ID, v, d, a, o, n, x, y, lane) %>%
   ungroup() -> carSubset
 
+# Currently the changed column in carsAug looks for lane changes in the entire dataset. Redo it so it only finds lane changes in the T observatiosn
+
 carSubset %>%
   group_by(ID) %>%
-  summarise(startLane = head(lane, 1)) %>%
-  right_join(carSubset) %>%
-  group_by(ID) %>%
-  mutate(changed = any(lane != startLane)) %>%
+  mutate(startLane = head(lane, 1),
+         changed = any(lane != startLane)) %>%
   ungroup() -> carSubset
 
-carArray <- array(0, dim = c(600, 2, N))
+carArray <- array(0, dim = c(maxT, 2, N))
 for(i in 1:N){
   carArray[,,i] <- carSubset %>%
     filter(ID == subID[i]) %>%
@@ -55,7 +56,7 @@ for(i in 1:N){
   priorLinv[,,i] <- solve(t(chol(diag(10, 2))))
 }
 
-fit <- reparamVB(data = carArray,
+fitWhole <- reparamVB(data = carArray,
                  lambda = lambda,
                  model = erraticGrad,
                  S = 10,
@@ -65,40 +66,10 @@ fit <- reparamVB(data = carArray,
                  priorMean = priorMean,
                  priorLinv = priorLinv)
 
-ggplot() + geom_line(aes(1:fit$iter, fit$LB))
-
-density <- NULL
-params <- NULL
-for(i in 1:N){
-  mu <- fit$lambda[(i-1)*6 + 1:2]
-  U <- matrix(fit$lambda[(i-1)*6 + 3:6], 2)
-  Sigma <- t(U) %*% U
-  sd <- sqrt(diag(Sigma))
-  dens <- gaussianDensity(mu = mu,
-                          sd = sd, 
-                          transform = c('exp', 'exp'),
-                          names = c('sigma[a]^{2}', 'sigma[omega]^{2}'))
-  dens$ID <- subID[i]
-  density <- rbind(density, dens)
-  
-  rho <- cov2cor(Sigma)[1, 2]
-  params <- rbind(params,
-                data.frame(meana = mu[1],
-                           meano = mu[2],
-                           sda = sd[1],
-                           sdo = sd[2],
-                           rho = rho,
-                           ID = subID[i]))
-  
-  
-}
-
-ggplot(density) + geom_line(aes(support, density, group = ID)) + facet_wrap(~var, scales = 'free', labeller = label_parsed)
-
 # UVB Loop
 
 set.seed(5)
-Tseq <- c(0, 100, seq(110, 600, 10))
+Tseq <- c(0, 100, seq(110, maxT, 10))
 
 priorMean <- matrix(0, 2, N)
 priorLinv <- array(0, dim = c(2, 2, N))
@@ -121,7 +92,8 @@ for(t in 2:length(Tseq)){
                    maxIter = 2000,
                    threshold = 0.01 * N,
                    priorMean = priorMean,
-                   priorLinv = priorLinv)
+                   priorLinv = priorLinv,
+                   suppressProgress = TRUE)
 
   lambda <- fit$lambda
   priorMean <- matrix(0, 2, N)
@@ -157,37 +129,28 @@ params %>%
     facet_wrap(~var, scales = 'free', labeller = label_parsed) + 
     theme_bw()
 
-
 params %>%
-  filter(T == 600) %>%
+  filter(T == maxT) %>%
   select(meana, meano, sda, sdo, rho) %>%
   GGally::ggpairs()
 
 params %>%
-  filter(T == 600) %>%
+  filter(T == maxT) %>%
   mutate(meano = exp(meano + 0.5 * sdo^2),
          meana = exp(meana + 0.5 * sda^2)) %>%
-  gather(param, mean, meano, meana) %>%
-  ggplot() + geom_density(aes(mean)) + facet_wrap(~param, scales = 'free')
-
-params %>%
-  filter(T == 600) %>%
-  mutate(meano = exp(meano + 0.5 * sdo^2)) %>%
   .$meano %>%
-  quantile(seq(0.2, 1, 0.2)) -> varO
-
-varO
+  quantile(c(0.01, 0.5, 0.8, 0.99, 1)) -> varO
 
 params %>%
-  filter(T == 600) %>%
-  mutate(meana = exp(meana + 0.5 * sda^2)) %>%
+  filter(T == maxT) %>%
+  mutate(meano = exp(meano + 0.5 * sdo^2),
+         meana = exp(meana + 0.5 * sda^2)) %>%
   .$meana %>%
-  quantile(seq(0.2, 1, 0.2)) -> varA
+  quantile(c(0.01, 0.5, 0.8, 0.99, 1)) -> varA
 
-carSubset %>%
-  right_join(params %>%
-               filter(T == 600)) %>%
-  #right_join(params) %>%
+
+params %>%
+  filter(T == maxT) %>%
   mutate(meano = exp(meano + 0.5 * sdo^2),
          meana = exp(meana + 0.5 * sda^2), 
          OQ = case_when(meano <= varO[1] ~ 1L,
@@ -200,14 +163,75 @@ carSubset %>%
                         meana <= varA[3] ~ 3L,
                         meana <= varA[4] ~ 4L,
                         TRUE ~ 5L)) %>%
-  ggplot() + geom_path(aes(n, x, group = ID, colour = changed)) + facet_grid(AQ~OQ)
+  select(ID, OQ, AQ) -> quantiles
+
+carSubset %>%
+  left_join(quantiles) %>%
+  ggplot() + geom_path(aes(n, x, group = ID)) + facet_wrap(~OQ)
+
+
+support <- seq(1e-8, 0.01, length.out = 1000)
+
+autoSupportDlnorm <- function(logmean, logsd, length = 1000){
+  mean <- exp(logmean + 0.5 * logsd^2)
+  sd <- sqrt((exp(logsd^2) - 1) * exp(2 * logmean + logsd^2))
+  support <- seq(max(1e-12, mean - 5 * sd), mean + 5 * sd, length.out = 1000)
+  dens <- dlnorm(support, logmean, logsd)
+  data.frame(support = support,
+             density = dens)
+}
+
+set.seed(15)
+quantiles %>%
+  filter(OQ >= 4) %>% 
+  .$ID %>% 
+  sample(9) -> sample
+
+params %>% 
+  left_join(quantiles) %>%
+  filter(ID %in% sample) %>%
+  group_by(ID, T) %>%
+  do(autoSupportDlnorm(.$meano, .$sdo)) -> posteriorSequence
+
+
+density <- NULL
+for(i in 1:N){
+  if(!subID[i] %in% sample){
+    next
+  } 
+  mu <- fit$lambda[(i-1)*6 + 1:2]
+  U <- matrix(fit$lambda[(i-1)*6 + 3:6], 2)
+  Sigma <- t(U) %*% U
+  sd <- sqrt(diag(Sigma))
+  dens <- gaussianDensity(mu = mu,
+                          sd = sd, 
+                          transform = c('exp', 'exp'),
+                          names = c('sigma[a]^{2}', 'sigma[omega]^{2}'))
+  dens$ID <- subID[i]
+  density <- rbind(density, filter(dens, var == 'sigma[omega]^{2}'))
+}
+
+ggplot(posteriorSequence) + geom_line(aes(support, density, colour = T, group = T, alpha = T)) + 
+  geom_line(data = density, aes(support, density)) +
+  facet_wrap(~ID, scales = 'free') +
+  theme_bw() + 
+  scale_colour_gradient(high = '#743336', low = '#FF1C1C') + 
+  scale_alpha(guide = 'none', range = c(0.1, 0.4)) + 
+  labs(y = NULL, x = NULL) + 
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_blank())
+
+
+
 
 
 
 
 carSubset %>%
   right_join(params %>%
-               filter(T == 600)) %>%
+               filter(T == maxT)) %>%
   mutate(meano = exp(meano + 0.5 * sdo^2),
          meana = exp(meana + 0.5 * sda^2), 
          OQ = case_when(meano <= varO[1] ~ 'Q1',
@@ -221,8 +245,8 @@ carSubset %>%
                         meana <= varA[4] ~ 'Q4',
                         TRUE ~ 'Q5')) %>%
   group_by(AQ, OQ) %>%
-  summarise(ch = sum(changed) / (57 * 600)) 
-  spread(AQ, ch) %>%
+  summarise(ch = sum(changed) / (61 * maxT)) %>%
+  spread(AQ, ch, fill = 0) %>%
   rbind(data.frame(OQ = 'Total',
                    Q1 = sum(.[,2]),
                    Q2 = sum(.[,3]),
@@ -235,7 +259,7 @@ carSubset %>%
 
 carSubset %>%
   right_join(params %>%
-               filter(T == 600)) %>%
+               filter(T == maxT)) %>%
   mutate(meano = exp(meano + 0.5 * sdo^2),
          meana = exp(meana + 0.5 * sda^2),
          OQ = case_when(meano < quantile(meano, 0.1) ~ 'Low',
